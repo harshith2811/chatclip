@@ -23,6 +23,8 @@ from ..contracts.models import (
     Transcript,
     TranscriptSegment,
     WordTimestamp,
+    ComplianceProfile,
+    RightsManifest,
 )
 from ..contracts.interfaces import (
     RightsPolicy,
@@ -36,6 +38,7 @@ from ..contracts.interfaces import (
     RightsPolicyViolationError,
 )
 from ..orchestration.state_machine import JobJournal
+from ..config import is_legal_officer_enabled
 from ..discovery.heatmap import HeatmapAnalyzer
 from ..detection.segmenter import suppress_overlapping_candidates
 from ..detection.short_viability import ShortViabilityValidator
@@ -43,6 +46,7 @@ from ..scoring.metadata_generator import MetadataGenerator
 from ..detection.deadair import DeadAirPruner, PruneResult
 from ..rendering.b_roll import BRollOverlayEngine, BRollConfig, BRollOverlayResult
 from ..scoring.visual_director import VisualCreativeDirector, VisualInterventionDecision
+from ..utils.file_ops import safe_remove
 
 
 def remap_transcript_for_keep_intervals(
@@ -167,6 +171,7 @@ class ClippingPipeline:
         b_roll_engine: Optional[BRollOverlayEngine] = None,
         visual_director: Optional[VisualCreativeDirector] = None,
         output_dir: str = "data/rendered_clips",
+        compliance_profile: Optional[ComplianceProfile] = None,
     ):
         self.rights_policy = rights_policy
         self.asset_provider = asset_provider
@@ -184,6 +189,33 @@ class ClippingPipeline:
         self.b_roll_engine = b_roll_engine or BRollOverlayEngine()
         self.visual_director = visual_director or VisualCreativeDirector()
         self.output_dir = output_dir
+        if compliance_profile is not None:
+            self.compliance_profile = compliance_profile
+        else:
+            prof_raw = os.getenv("COMPLIANCE_PROFILE", ComplianceProfile.REVIEW_REQUIRED.value)
+            try:
+                self.compliance_profile = ComplianceProfile(prof_raw)
+            except ValueError:
+                self.compliance_profile = ComplianceProfile.REVIEW_REQUIRED
+
+    def _assert_rights_valid(self, video_id: str, stage: str) -> RightsManifest:
+        """
+        Enforces fresh DB-backed rights verification at every pipeline boundary
+        so mid-flight revocation or expiration immediately halts execution.
+        """
+        if hasattr(self.rights_policy, "assert_can_process"):
+            return self.rights_policy.assert_can_process(
+                video_id, stage=stage, profile=self.compliance_profile
+            )
+        manifest = self.rights_policy.check_rights(video_id)
+        if not is_legal_officer_enabled():
+            return manifest
+        if not self.rights_policy.verify_rights(manifest):
+            raise RightsPolicyViolationError(
+                f"Rights check failed during stage '{stage}' for '{video_id}'. "
+                f"Status: {manifest.status.value}. Basis: {manifest.basis.value}."
+            )
+        return manifest
 
 
     def reconcile_job_checkpoints(self, job: ClipJob) -> None:
@@ -217,13 +249,13 @@ class ClippingPipeline:
             if stage_idx <= stages_order.index(JobStage.HANDED_OFF):
                 job.handoff_receipt = None
 
-        # 1. Rights checked
+        # 1. Rights checked (always re-verify against fresh DB/ledger state, never trust stale checkpoint)
         if JobStage.RIGHTS_CHECKED.value in job.checkpoints:
-            if not job.rights_manifest and self.rights_policy:
+            if self.rights_policy:
                 try:
                     job.rights_manifest = self.rights_policy.check_rights(job.video_id)
                 except Exception:
-                    pass
+                    job.rights_manifest = None
             if not job.rights_manifest or (self.rights_policy and not self.rights_policy.verify_rights(job.rights_manifest)):
                 invalidate_from(0)
                 return
@@ -302,15 +334,12 @@ class ClippingPipeline:
 
         try:
             # Stage 1: Rights Policy Check
-            manifest = self.rights_policy.check_rights(video_id)
+            try:
+                manifest = self._assert_rights_valid(video_id, stage="rights_preflight")
+            except RightsPolicyViolationError as exc:
+                self.journal.mark_failed(job, str(exc))
+                raise
             job.rights_manifest = manifest
-            if not self.rights_policy.verify_rights(manifest):
-                err = (
-                    f"Rights check failed for '{video_id}'. Status: {manifest.status.value}. "
-                    f"Basis: {manifest.basis.value}. Processing halted before asset resolution."
-                )
-                self.journal.mark_failed(job, err)
-                raise RightsPolicyViolationError(err)
 
             self.journal.record_stage_checkpoint(
                 job, JobStage.RIGHTS_CHECKED, {"rights_id": manifest.rights_id, "basis": manifest.basis.value}
@@ -343,7 +372,9 @@ class ClippingPipeline:
                     },
                 )
 
-            # Stage 3: Transcription (with checkpoint resumption)
+            # Stage 3: Transcription (with checkpoint resumption & fresh rights re-check)
+            manifest = self._assert_rights_valid(video_id, stage="transcription")
+            job.rights_manifest = manifest
             transcript = None
             if JobStage.TRANSCRIBED.value in job.checkpoints:
                 transcript = self.transcriber.load_from_cache(video_id)
@@ -357,6 +388,8 @@ class ClippingPipeline:
                 )
 
             # Stage 4 & 5: Candidate Detection, Scoring, & Deduplication
+            manifest = self._assert_rights_valid(video_id, stage="segmentation_scoring")
+            job.rights_manifest = manifest
             top_candidate = None
             if JobStage.SCORED.value in job.checkpoints and job.candidate:
                 top_candidate = job.candidate
@@ -541,7 +574,9 @@ class ClippingPipeline:
             self.journal.mark_failed(job, err)
             raise ValueError(err)
 
-        # Stage 7: Vertical Video Rendering (with checkpoint resumption)
+        # Stage 7: Vertical Video Rendering (with checkpoint resumption & fresh rights re-check)
+        manifest = self._assert_rights_valid(job.video_id, stage="rendering")
+        job.rights_manifest = manifest
         rendered_clip = None
         if JobStage.RENDERED.value in job.checkpoints and job.rendered_clip:
             if os.path.exists(job.rendered_clip.file_path) and os.path.getsize(job.rendered_clip.file_path) > 0:
@@ -563,30 +598,45 @@ class ClippingPipeline:
                     v_expr, a_expr = self.dead_air_pruner.generate_select_expressions(
                         prune_res.keep_intervals, offset_seconds=0.0
                     )
+                    pruning_succeeded = False
                     if os.path.exists(asset_path) and os.path.getsize(asset_path) > 1000:
                         cut_cmd = [
                             "ffmpeg", "-y", "-i", asset_path,
-                            "-filter_complex", f"[0:v]{v_expr}[v];[0:a]{a_expr}[a]",
+                            "-filter_complex", f"[0:v]{v_expr}[v];[0:a]{a_expr},atrim=0:{prune_res.pruned_duration:.3f},asetpts=PTS-STARTPTS[a]",
                             "-map", "[v]", "-map", "[a]",
+                            "-t", f"{prune_res.pruned_duration:.3f}",
                             "-c:v", "libx264", "-preset", "ultrafast",
                             "-c:a", "aac",
                             pruned_tmp_path,
                         ]
                         try:
                             res = subprocess.run(cut_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-                            if res.returncode == 0 and os.path.exists(pruned_tmp_path) and os.path.getsize(pruned_tmp_path) > 0:
+                            if res.returncode == 0 and os.path.exists(pruned_tmp_path) and os.path.getsize(pruned_tmp_path) > 1000:
+                                pruning_succeeded = True
                                 active_source_path = pruned_tmp_path
-                        except Exception:
-                            pass
+                            else:
+                                if os.path.exists(pruned_tmp_path):
+                                    safe_remove(pruned_tmp_path)
+                        except Exception as exc:
+                            logger.warning(f"Dead-air pruning failed during FFmpeg cut: {exc}")
+                            if os.path.exists(pruned_tmp_path):
+                                safe_remove(pruned_tmp_path)
 
-                    candidate.start_seconds = 0.0
-                    candidate.end_seconds = prune_res.pruned_duration
-                    candidate.duration_seconds = prune_res.pruned_duration
-                    active_transcript = remap_transcript_for_keep_intervals(
-                        transcript,
-                        prune_res.keep_intervals,
-                        candidate_start=0.0,
-                    )
+                    # BUG-L02 Transactional update: Only update candidate bounds and remap transcript IF pruning succeeded
+                    if pruning_succeeded:
+                        candidate.start_seconds = 0.0
+                        candidate.end_seconds = prune_res.pruned_duration
+                        candidate.duration_seconds = prune_res.pruned_duration
+                        active_transcript = remap_transcript_for_keep_intervals(
+                            transcript,
+                            prune_res.keep_intervals,
+                            candidate_start=0.0,
+                        )
+                    else:
+                        logger.info(
+                            f"Dead-air pruning bypassed or failed for candidate '{candidate.candidate_id}'. "
+                            f"Preserving original bounds [{candidate.start_seconds:.2f}, {candidate.end_seconds:.2f}] and source path."
+                        )
 
             rendered_clip = self.renderer.render_clip(
                 source_path=active_source_path,
@@ -598,57 +648,9 @@ class ClippingPipeline:
 
             # Clean up pruned temp file if one was produced
             if active_source_path != asset_path and os.path.exists(active_source_path):
-                try:
-                    os.remove(active_source_path)
-                except OSError:
-                    pass
+                safe_remove(active_source_path)
 
-            # Creative Intelligence: Gemini Strategic FLUX Evaluation
-            flux_telemetry = None
-            if getattr(render_profile, "enable_flux", True) and self.visual_director and active_transcript:
-                try:
-                    vis_decision = self.visual_director.evaluate_candidate(
-                        candidate=candidate,
-                        transcript=active_transcript,
-                        video_metadata=job.source_metadata,
-                        available_assets_dir=broll_assets_dir,
-                    )
-                    flux_telemetry = vis_decision.to_dict()
-                    if vis_decision.needed and not vis_decision.broll_video_path:
-                        vis_decision = self.visual_director.execute_intervention(vis_decision, output_dir=self.output_dir)
-                        flux_telemetry = vis_decision.to_dict()
-
-                    # Apply strategic FLUX visual asset into video pipeline
-                    target_asset = vis_decision.broll_video_path or (
-                        vis_decision.asset_path if (vis_decision.asset_path and os.path.exists(vis_decision.asset_path)) else None
-                    )
-                    if vis_decision.needed and target_asset and os.path.exists(target_asset) and self.b_roll_engine:
-                        flux_out_path = os.path.join(
-                            self.output_dir,
-                            f"{os.path.splitext(os.path.basename(rendered_clip.file_path))[0]}_flux.mp4"
-                        )
-                        flux_overlay_res = self.b_roll_engine.apply_explicit_overlay(
-                            video_path=rendered_clip.file_path,
-                            output_path=flux_out_path,
-                            overlay_asset_path=target_asset,
-                            start_seconds=vis_decision.target_start_seconds,
-                            duration_seconds=vis_decision.target_duration_seconds or 2.5,
-                            description=f"FLUX: {vis_decision.concept}",
-                        )
-                        if flux_overlay_res.applied:
-                            prev_path = rendered_clip.file_path
-                            rendered_clip.file_path = flux_overlay_res.output_video_path
-                            if flux_overlay_res.file_hash:
-                                rendered_clip.file_hash = flux_overlay_res.file_hash
-                            if prev_path != rendered_clip.file_path and os.path.exists(prev_path):
-                                try:
-                                    os.remove(prev_path)
-                                except OSError:
-                                    pass
-                            flux_telemetry["overlay_applied"] = True
-                            flux_telemetry["output_video_path"] = rendered_clip.file_path
-                except Exception as ex:
-                    logger.warning(f"Visual director strategic evaluation error: {ex}")
+            # Creative Intelligence: Gemini Strategic FLUX Evaluation - Purged as requested
 
             # Post-render Automated B-Roll Overlay if requested by caller
             broll_telemetry = None
@@ -689,12 +691,8 @@ class ClippingPipeline:
             }
             if deadair_telemetry:
                 checkpoint_payload["deadair_pruned"] = deadair_telemetry
-            if flux_telemetry:
-                checkpoint_payload["flux_intervention"] = flux_telemetry
             if broll_telemetry:
                 checkpoint_payload["broll_overlay"] = broll_telemetry
-            if flux_telemetry:
-                checkpoint_payload["flux_intelligence"] = flux_telemetry
 
             self.journal.record_stage_checkpoint(
                 job,
@@ -715,11 +713,41 @@ class ClippingPipeline:
                 self.journal.mark_failed(job, err)
                 raise RuntimeError(err)
 
+            qa_checkpoint = {
+                "qa_status": qa_report.status,
+                "errors": qa_report.errors,
+                "warnings": qa_report.warnings,
+            }
+            risk_db_path = getattr(getattr(self.rights_policy, "db", None), "db_path", None) or getattr(
+                getattr(self.journal, "db", None), "db_path", None
+            )
+            if risk_db_path and os.path.exists(risk_db_path):
+                try:
+                    from ..audio.risk_analyzer import AudioRiskAnalyzer
+
+                    audio_risk = AudioRiskAnalyzer(db_path=risk_db_path).analyze_clip(
+                        video_id=job.video_id,
+                        clip_id=rendered_clip.clip_id,
+                        file_path=rendered_clip.file_path,
+                        metadata=getattr(job, "source_metadata", None),
+                    )
+                    qa_checkpoint["audio_risk"] = audio_risk.to_dict()
+                    if is_legal_officer_enabled() and not dry_run and audio_risk.match_status == "DETECTED_MATCH" and not audio_risk.replacement_audio_path:
+                        err = f"Audio risk check flagged DETECTED_MATCH for '{rendered_clip.clip_id}'; operator review or licensed audio replacement required before publish."
+                        self.journal.mark_failed(job, err)
+                        raise PermissionError(err)
+                except PermissionError:
+                    raise
+                except Exception as risk_ex:
+                    logger.warning(f"Audio risk analysis skipped cleanly: {risk_ex}")
+
             self.journal.record_stage_checkpoint(
-                job, JobStage.QA_VERIFIED, {"qa_status": qa_report.status, "errors": qa_report.errors, "warnings": qa_report.warnings}
+                job, JobStage.QA_VERIFIED, qa_checkpoint
             )
 
-        # Stage 9: Autopost Handoff (with checkpoint resumption)
+        # Stage 9: Autopost Handoff (with checkpoint resumption & fresh rights re-check)
+        manifest = self._assert_rights_valid(job.video_id, stage="publishing_handoff")
+        job.rights_manifest = manifest
         handoff_receipt = None
         if JobStage.HANDED_OFF.value in job.checkpoints and job.handoff_receipt:
             handoff_receipt = job.handoff_receipt
@@ -733,9 +761,13 @@ class ClippingPipeline:
             )
             job.handoff_receipt = handoff_receipt
 
-        if handoff_receipt.status in ["DELIVERED", "DRY_RUN_SIMULATED", "DUPLICATE_SKIPPED"]:
+        terminal_success = {"DELIVERED", "DRY_RUN_SIMULATED", "DUPLICATE_SKIPPED"}
+        async_accepted = {"QUEUED", "SCHEDULED", "PENDING_APPROVAL", "SUBMITTED", "PROCESSING", "ACCEPTED"}
+
+        if handoff_receipt.status in terminal_success or handoff_receipt.status in async_accepted:
             job.current_stage = JobStage.HANDED_OFF
             job.status = JobStatus.SUCCEEDED
+            job.error_message = None
         else:
             job.status = JobStatus.FAILED
             job.error_message = f"Handoff returned status '{handoff_receipt.status}'."
@@ -766,11 +798,7 @@ class ClippingPipeline:
         viral moments from a single source video.
         """
         render_profile = profile or RenderProfile()
-        manifest = self.rights_policy.check_rights(video_id)
-        if not self.rights_policy.verify_rights(manifest):
-            raise RightsPolicyViolationError(
-                f"Rights check failed for '{video_id}'. Status: {manifest.status.value}."
-            )
+        manifest = self._assert_rights_valid(video_id, stage="batch_render_preflight")
 
         try:
             asset_path = self.asset_provider.resolve_asset(video_id, manifest)
@@ -883,11 +911,7 @@ class ClippingPipeline:
         Extracts, segments, and scores candidate highlights for a video
         without rendering, allowing operator inspection and preview.
         """
-        manifest = self.rights_policy.check_rights(video_id)
-        if not self.rights_policy.verify_rights(manifest):
-            raise RightsPolicyViolationError(
-                f"Rights check failed for '{video_id}'. Status: {manifest.status.value}."
-            )
+        manifest = self._assert_rights_valid(video_id, stage="preview_candidates")
         transcript = self.transcriber.load_from_cache(video_id)
         if not transcript:
             try:

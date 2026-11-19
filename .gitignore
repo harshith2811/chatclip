@@ -108,6 +108,10 @@ models/*.pb
 
 # --- Upstream Clones & Third-Party Research Repositories ---
 research/upstream/
+supoclip_repo/
+artifacts/
+*.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
 
 # --- Environment Variables, API Keys & Secret Tokens ---
 # CRITICAL: Never commit operational API tokens or credentials

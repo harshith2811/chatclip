@@ -150,3 +150,39 @@ def test_heatmap_peak_boost():
     # c2 receives a boost and overtakes c1
     assert decision.recommended_count == 1
     assert decision.selected_candidates[0].candidate_id == "c2"
+
+
+def test_quality_cliff_with_heatmap_boosted_candidate():
+    """Regression test for L03: Quality cliff comparison uses effective scores consistently."""
+    decider = SolidShortsDecider()
+    # c1 has base score 80.0, but gets boosted by heatmap peak to 88.0
+    # c2 has base score 73.0 (above floor 72.0)
+    # Under the old bug: avg_selected_score was 80.0 (unboosted), drop was 80 - 73 = 7.0 (< 12.0), cliff was missed!
+    # Under the fix: avg_selected_score is 88.0, drop is 88 - 73 = 15.0 (> 12.0), cliff is correctly detected!
+    c1 = make_candidate("c1", 0.0, 30.0, score=80.0, hook=8.0)
+    c2 = make_candidate("c2", 60.0, 90.0, score=73.0, hook=7.5)
+
+    heatmap = HeatmapData(
+        video_id="test_vid",
+        source="TEST",
+        peaks=[
+            HeatmapPeak(
+                peak_id="p1",
+                start_time=10.0,
+                end_time=25.0,
+                center_time=15.0,
+                intensity=0.90,
+                prominence=0.80,
+                width_seconds=15.0,
+                classification="GLOBAL_MAXIMA",
+                suggested_clip_start=10.0,
+                suggested_clip_end=25.0,
+            )
+        ]
+    )
+
+    decision = decider.decide([c1, c2], duration_seconds=600.0, heatmap_data=heatmap)
+    assert decision.recommended_count == 1
+    assert [c.candidate_id for c in decision.selected_candidates] == ["c1"]
+    assert any("Quality Cliff detected" in r for r in decision.reasons)
+

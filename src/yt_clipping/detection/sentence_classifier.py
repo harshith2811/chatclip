@@ -48,6 +48,10 @@ HOOK_PROVOCATIVE = frozenset({
     "i need to tell you", "stop doing", "stop using", "they wouldn't",
     "they didn't", "they told me", "people don't realize",
     "here is", "here's", "the secret", "secret to", "secret of",
+    "something happens", "something interesting happens", "something crazy happens",
+    "what happens when", "here is what happens", "here's what happens",
+    "the moment when", "watch what happens", "this is what happens",
+    "interesting happens", "then something happens", "then something interesting",
 })
 
 HOOK_IMPERATIVES = frozenset({
@@ -110,7 +114,9 @@ PROVOCATIVE_THEY_HOOKS = (
 
 CONTRAST_BUT_HOOKS = (
     "but actually", "but wait", "but here's", "but why",
-    "but the truth", "but what", "but somehow",
+    "but the truth", "but what", "but somehow", "but then",
+    "but if", "but look", "but notice", "but here", "but when",
+    "but now", "but what if", "but there", "but instead", "but imagine",
 )
 
 WEAK_ENDINGS = frozenset({

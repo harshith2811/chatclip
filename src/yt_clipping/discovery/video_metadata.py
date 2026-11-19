@@ -147,6 +147,13 @@ class EnrichedVideoInfo:
     metadata_provider: str = "unknown"
     fetched_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     extraction_status: str = "success"
+    license: str = "unknown"
+    embeddable: bool = True
+    privacy_status: str = "unknown"
+    made_for_kids: bool = False
+    region_restriction: Dict[str, Any] = field(default_factory=dict)
+    compliance_bucket: str = "unknown"
+    risk_flags: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -236,7 +243,7 @@ class VideoMetadataService:
         """Queries YouTube Data API v3 videos endpoint."""
         endpoint = (
             f"https://www.googleapis.com/youtube/v3/videos"
-            f"?part=snippet,contentDetails,statistics"
+            f"?part=snippet,contentDetails,statistics,status"
             f"&id={video_id}&key={self.api_key}"
         )
 
@@ -258,6 +265,7 @@ class VideoMetadataService:
                         snippet = item.get("snippet", {})
                         content_details = item.get("contentDetails", {})
                         statistics = item.get("statistics", {})
+                        status_obj = item.get("status", {})
 
                         # Thumbnail resolution selection
                         thumbs = snippet.get("thumbnails", {})
@@ -270,6 +278,26 @@ class VideoMetadataService:
                         )
 
                         duration_seconds = parse_iso8601_duration(content_details.get("duration", ""))
+                        lic = str(status_obj.get("license", "youtube"))
+                        embeddable = bool(status_obj.get("embeddable", True))
+                        privacy_status = str(status_obj.get("privacyStatus", "public"))
+                        made_for_kids = bool(status_obj.get("madeForKids", False))
+                        region_restriction = content_details.get("regionRestriction", {}) or {}
+                        category_id = str(snippet.get("categoryId", ""))
+
+                        from .risk_classifier import RiskClassificationRegistry
+                        cls_res = RiskClassificationRegistry().classify_source(
+                            video_id=video_id,
+                            title=snippet.get("title", ""),
+                            channel_id=snippet.get("channelId"),
+                            channel_name=snippet.get("channelTitle", ""),
+                            license_status=lic,
+                            embeddable=embeddable,
+                            privacy_status=privacy_status,
+                            made_for_kids=made_for_kids,
+                            category_id=category_id,
+                            region_restriction=region_restriction,
+                        )
 
                         return EnrichedVideoInfo(
                             video_id=video_id,
@@ -283,12 +311,19 @@ class VideoMetadataService:
                             comment_count=int(statistics.get("commentCount", 0)),
                             published_at=snippet.get("publishedAt", ""),
                             duration=duration_seconds,
-                            category=snippet.get("categoryId", ""),
+                            category=category_id,
                             tags=snippet.get("tags", []),
                             thumbnail_url=thumb_url,
                             canonical_url=canonical_url,
                             metadata_provider="youtube_data_api_v3",
                             extraction_status="success",
+                            license=lic,
+                            embeddable=embeddable,
+                            privacy_status=privacy_status,
+                            made_for_kids=made_for_kids,
+                            region_restriction=region_restriction,
+                            compliance_bucket=cls_res.compliance_bucket,
+                            risk_flags=cls_res.risk_flags,
                         )
             except urllib.error.HTTPError as e:
                 if e.code in (400, 401, 403, 404, 429):
@@ -338,6 +373,20 @@ class VideoMetadataService:
 
         categories = info.get("categories") or []
         category = categories[0] if categories else ""
+        lic = str(info.get("license") or "unknown")
+        privacy_status = str(info.get("availability") or "public")
+
+        from .risk_classifier import RiskClassificationRegistry
+        cls_res = RiskClassificationRegistry().classify_source(
+            video_id=video_id,
+            title=info.get("title", f"Video {video_id}"),
+            channel_id=info.get("channel_id"),
+            channel_name=info.get("uploader") or info.get("channel") or "",
+            license_status=lic,
+            embeddable=True,
+            privacy_status="public" if privacy_status in ("public", "unlisted", "unknown") else privacy_status,
+            category_id=str(category),
+        )
 
         return EnrichedVideoInfo(
             video_id=video_id,
@@ -357,6 +406,10 @@ class VideoMetadataService:
             canonical_url=canonical_url,
             metadata_provider="yt_dlp",
             extraction_status="success",
+            license=lic,
+            privacy_status=privacy_status,
+            compliance_bucket=cls_res.compliance_bucket,
+            risk_flags=cls_res.risk_flags,
         )
 
     def _read_cache(self, video_id: str) -> Optional[EnrichedVideoInfo]:

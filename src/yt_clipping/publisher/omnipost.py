@@ -8,6 +8,7 @@ Enforces strict Rights Clearance, QA verification, and Human Authorization gatin
 from typing import Dict, Any, Optional, List, Union
 import os
 import json
+import sqlite3
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from ..contracts.models import (
     compute_canonical_idempotency_key,
 )
 from ..contracts.interfaces import HandoffPublisher
+from ..config import is_legal_officer_enabled
 from ..orchestration.db import DatabaseManager
 from ..auth.google_oauth import DedicatedYouTubeAuth
 
@@ -102,6 +104,8 @@ class OmniPostPublisher(HandoffPublisher):
         channel_id: Optional[str] = None,
         thumbnail_path: Optional[str] = None,
         publish_target: str = "omnipost",  # "omnipost" or "youtube_dedicated"
+        tenant_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ) -> HandoffReceipt:
         """
         Gated publishing execution: enforces rights clearance, QA verification,
@@ -129,18 +133,35 @@ class OmniPostPublisher(HandoffPublisher):
             )
             return receipt
 
-        # 2. Enforce Rights Gate
-        if not rights_manifest.is_valid():
-            return HandoffReceipt(
-                receipt_id=f"rcpt-omnipost-rejected-{uuid.uuid4().hex[:10]}",
-                clip_id=rendered_clip.clip_id,
-                idempotency_key=idempotency_key,
-                status="REJECTED",
-                timestamp=now_iso,
-                target_mode=publish_target,
-                dry_run=dry_run,
-                response_payload={"error": f"Rights not cleared: {rights_manifest.status.value}"},
-            )
+        # 2. Enforce Rights Gate (both in-memory manifest AND fresh DB revocation check)
+        if is_legal_officer_enabled():
+            if not rights_manifest.is_valid():
+                return HandoffReceipt(
+                    receipt_id=f"rcpt-omnipost-rejected-{uuid.uuid4().hex[:10]}",
+                    clip_id=rendered_clip.clip_id,
+                    idempotency_key=idempotency_key,
+                    status="REJECTED",
+                    timestamp=now_iso,
+                    target_mode=publish_target,
+                    dry_run=dry_run,
+                    response_payload={
+                        "video_id": candidate.video_id,
+                        "error": f"Rights not cleared: {rights_manifest.status.value}",
+                    },
+                )
+
+            db_gate_error = self._check_fresh_db_revocation(candidate.video_id)
+            if db_gate_error:
+                return HandoffReceipt(
+                    receipt_id=f"rcpt-omnipost-rejected-{uuid.uuid4().hex[:10]}",
+                    clip_id=rendered_clip.clip_id,
+                    idempotency_key=idempotency_key,
+                    status="REJECTED",
+                    timestamp=now_iso,
+                    target_mode=publish_target,
+                    dry_run=dry_run,
+                    response_payload={"video_id": candidate.video_id, "error": db_gate_error},
+                )
 
         # 3. Enforce QA Gate
         if qa_report.status != "PASSED":
@@ -152,7 +173,12 @@ class OmniPostPublisher(HandoffPublisher):
                 timestamp=now_iso,
                 target_mode=publish_target,
                 dry_run=dry_run,
-                response_payload={"error": "QA verification failed", "errors": qa_report.errors},
+                response_payload={
+                    "error": "QA verification failed",
+                    "qa_status": qa_report.status,
+                    "errors": qa_report.errors,
+                    "warnings": qa_report.warnings,
+                },
             )
 
         # 4. Check Idempotency Ledger
@@ -220,7 +246,44 @@ class OmniPostPublisher(HandoffPublisher):
             caption=final_desc,
             target_platforms=target_platforms,
             scheduled_time=scheduled_time,
+            rights_manifest=rights_manifest,
+            approved_by_user=approved_by_user,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
         )
+
+    def _check_fresh_db_revocation(self, video_id: str) -> Optional[str]:
+        """Re-reads SQLite ledger and revocation_impacts so revoked/stale manifests cannot publish."""
+        db_path = getattr(getattr(self, "db", None), "db_path", None) or getattr(self, "db_path", None)
+        if not video_id or not db_path or db_path == ":memory:" or not os.path.exists(db_path):
+            return None
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            try:
+                tables = {
+                    r[0]
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                if "revocation_impacts" in tables:
+                    rev = conn.execute(
+                        "SELECT action_taken FROM revocation_impacts WHERE video_id = ? LIMIT 1",
+                        (video_id,),
+                    ).fetchone()
+                    if rev:
+                        return f"Asset '{video_id}' appears in revocation_impacts ({rev[0]})."
+                if "rights_ledger" in tables:
+                    row = conn.execute(
+                        "SELECT status, basis FROM rights_ledger WHERE video_id = ?",
+                        (video_id,),
+                    ).fetchone()
+                    if row is not None and row[0] != "VERIFIED":
+                        return f"Fresh DB rights check rejected '{video_id}': status={row[0]}."
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.error(f"Fresh DB rights/revocation check failed for '{video_id}': {exc}")
+            return f"Fresh DB rights check error for '{video_id}': {exc}"
+        return None
 
     # Alias for convenience
     publish = publish_clip
@@ -298,15 +361,24 @@ class OmniPostPublisher(HandoffPublisher):
         caption: str,
         target_platforms: List[str],
         scheduled_time: Optional[str],
+        rights_manifest: Optional[RightsManifest] = None,
+        approved_by_user: bool = True,
+        tenant_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
     ) -> HandoffReceipt:
-        """Delivers clip to OmniPost server via /api/upload."""
+        """Delivers clip to OmniPost server via /api/v2/ingest (or fallback /api/upload)."""
         headers = {}
         if self.api_key:
             headers["x-api-key"] = self.api_key
             headers["x-admin-key"] = self.api_key
             headers["Authorization"] = f"Bearer {self.api_key}"
+        if tenant_id:
+            headers["x-tenant-id"] = tenant_id
+        if workspace_id:
+            headers["x-workspace-id"] = workspace_id
 
-        upload_url = f"{self.base_url}/api/upload"
+        v2_ingest_url = f"{self.base_url}/api/v2/ingest"
+        legacy_upload_url = f"{self.base_url}/api/upload"
         hashtags = "#shorts #viral #fyp"
         full_caption = f"{caption}\n\n{hashtags}".strip() if caption else hashtags
 
@@ -314,29 +386,79 @@ class OmniPostPublisher(HandoffPublisher):
             if not os.path.exists(rendered_clip.file_path):
                 raise FileNotFoundError(f"Rendered clip file not found: {rendered_clip.file_path}")
 
+            rights_dict = rights_manifest.to_dict() if rights_manifest and hasattr(rights_manifest, "to_dict") else None
+            attribution_payload = {
+                "creator_name": rights_manifest.owner_name if rights_manifest else "",
+                "source_url": f"https://www.youtube.com/watch?v={candidate.video_id}",
+                "text": full_caption,
+            }
+
+            # 1. First attempt: OmniPost 2.0 Ingestion Gateway (/api/v2/ingest)
+            v2_payload = {
+                "schema_version": "2.0",
+                "video_id": candidate.video_id,
+                "approved_by_user": bool(approved_by_user),
+                "legal_officer_bypass": not is_legal_officer_enabled(),
+                "rights_manifest": rights_dict,
+                "attribution": attribution_payload,
+                "tenant_id": tenant_id,
+                "workspace_id": workspace_id,
+                "source": {
+                    "system": "yt-clipping-intelligence",
+                    "job_id": rendered_clip.job_id,
+                    "asset_id": rendered_clip.clip_id,
+                    "video_id": candidate.video_id,
+                    "tenant_id": tenant_id,
+                },
+                "media": {
+                    "filename": os.path.basename(rendered_clip.file_path),
+                    "checksum": rendered_clip.file_hash,
+                    "mime_type": "video/mp4",
+                    "size_bytes": os.path.getsize(rendered_clip.file_path) if os.path.exists(rendered_clip.file_path) else 0,
+                },
+                "content": {
+                    "title": title,
+                    "description": full_caption,
+                    "tags": ["shorts", "viral", "highlights"],
+                    "language": "en",
+                },
+                "publishing": {
+                    "destinations": target_platforms,
+                    "distribution_policy": "shorts_distribution",
+                    "schedule_mode": "scheduled" if scheduled_time else "automatic",
+                    "scheduled_time": scheduled_time,
+                    "priority": "normal",
+                    "workspace_id": workspace_id,
+                },
+                "omnipost_routing": {
+                    "workspace_id": workspace_id,
+                    "channels": target_platforms,
+                    "publish_immediately": not bool(scheduled_time),
+                },
+                "enrichment": {
+                    "auto_enrich": True,
+                    "tone": "engaging",
+                },
+                "idempotency_key": idempotency_key,
+            }
+
             with open(rendered_clip.file_path, "rb") as vf:
                 files = {"file": (os.path.basename(rendered_clip.file_path), vf, "video/mp4")}
-                data = {
-                    "title": title,
-                    "caption": full_caption,
-                    "platforms": ",".join(target_platforms),
-                    "mediaType": "video",
-                    "status": "Published" if not scheduled_time else "Scheduled",
-                }
-                if scheduled_time:
-                    data["scheduledDateTime"] = scheduled_time
-
                 resp = requests.post(
-                    upload_url,
+                    v2_ingest_url,
                     headers=headers,
-                    data=data,
+                    data={"payload": json.dumps(v2_payload)},
                     files=files,
                     timeout=self.timeout,
                 )
 
+            # If OmniPost 2.0 returned success (200 or 201)
             if resp.status_code in (200, 201):
                 resp_json = resp.json()
-                status = "SCHEDULED" if scheduled_time else "DELIVERED"
+                data = resp_json.get("data", resp_json)
+                is_dup = data.get("status") == "duplicate_skipped" or data.get("duplicate") is True
+                status = "DUPLICATE_SKIPPED" if is_dup else ("SCHEDULED" if scheduled_time else "DELIVERED")
+
                 receipt = HandoffReceipt(
                     receipt_id=f"rcpt-omnipost-{uuid.uuid4().hex[:10]}",
                     clip_id=rendered_clip.clip_id,
@@ -346,33 +468,104 @@ class OmniPostPublisher(HandoffPublisher):
                     target_mode="omnipost",
                     dry_run=False,
                     response_payload={
-                        **resp_json,
+                        **data,
                         "title": title,
                         "file_path": rendered_clip.file_path,
+                        "gateway_version": "2.0",
                     },
                 )
                 self._persist_receipt(receipt)
                 return receipt
-            else:
-                err_text = resp.text[:500]
-                logger.error(f"OmniPost returned error status {resp.status_code}: {err_text}")
-                receipt = HandoffReceipt(
-                    receipt_id=f"rcpt-omnipost-err-{uuid.uuid4().hex[:10]}",
-                    clip_id=rendered_clip.clip_id,
-                    idempotency_key=idempotency_key,
-                    status="FAILED",
-                    timestamp=now_iso,
-                    target_mode="omnipost",
-                    dry_run=False,
-                    response_payload={
-                        "status_code": resp.status_code,
-                        "error": err_text,
+
+            # 2. If V2 endpoint not found (404), fall back to legacy /api/upload
+            if resp.status_code == 404:
+                logger.info("OmniPost V2 endpoint not found; falling back to legacy /api/upload...")
+                with open(rendered_clip.file_path, "rb") as vf:
+                    files = {"file": (os.path.basename(rendered_clip.file_path), vf, "video/mp4")}
+                    legacy_data = {
                         "title": title,
-                        "file_path": rendered_clip.file_path,
-                    },
-                )
-                self._persist_receipt(receipt)
-                return receipt
+                        "caption": full_caption,
+                        "platforms": ",".join(target_platforms),
+                        "mediaType": "video",
+                        "status": "Published" if not scheduled_time else "Scheduled",
+                    }
+                    if scheduled_time:
+                        legacy_data["scheduledDateTime"] = scheduled_time
+
+                    legacy_resp = requests.post(
+                        legacy_upload_url,
+                        headers=headers,
+                        data=legacy_data,
+                        files=files,
+                        timeout=self.timeout,
+                    )
+
+                if legacy_resp.status_code in (200, 201):
+                    resp_json = legacy_resp.json()
+                    status = "SCHEDULED" if scheduled_time else "DELIVERED"
+                    receipt = HandoffReceipt(
+                        receipt_id=f"rcpt-omnipost-{uuid.uuid4().hex[:10]}",
+                        clip_id=rendered_clip.clip_id,
+                        idempotency_key=idempotency_key,
+                        status=status,
+                        timestamp=now_iso,
+                        target_mode="omnipost",
+                        dry_run=False,
+                        response_payload={
+                            **resp_json,
+                            "title": title,
+                            "file_path": rendered_clip.file_path,
+                            "gateway_version": "1.0_legacy",
+                        },
+                    )
+                    self._persist_receipt(receipt)
+                    return receipt
+                else:
+                    resp = legacy_resp
+
+            err_text = resp.text[:500]
+            outcome_uncertain = resp.status_code in (502, 503, 504)
+            logger.error(f"OmniPost returned error status {resp.status_code}: {err_text}")
+            receipt = HandoffReceipt(
+                receipt_id=f"rcpt-omnipost-err-{uuid.uuid4().hex[:10]}",
+                clip_id=rendered_clip.clip_id,
+                idempotency_key=idempotency_key,
+                status="OUTCOME_UNKNOWN" if outcome_uncertain else "FAILED",
+                timestamp=now_iso,
+                target_mode="omnipost",
+                dry_run=False,
+                response_payload={
+                    "video_id": candidate.video_id,
+                    "status_code": resp.status_code,
+                    "error": err_text,
+                    "title": title,
+                    "file_path": rendered_clip.file_path,
+                    "reconciliation_required": outcome_uncertain,
+                },
+            )
+            self._persist_receipt(receipt)
+            return receipt
+
+        except requests.exceptions.Timeout as tex:
+            logger.error(f"OmniPost request timed out (outcome unknown): {tex}")
+            receipt = HandoffReceipt(
+                receipt_id=f"rcpt-omnipost-unk-{uuid.uuid4().hex[:10]}",
+                clip_id=rendered_clip.clip_id,
+                idempotency_key=idempotency_key,
+                status="OUTCOME_UNKNOWN",
+                timestamp=now_iso,
+                target_mode="omnipost",
+                dry_run=False,
+                response_payload={
+                    "video_id": candidate.video_id,
+                    "exception": str(tex),
+                    "title": title,
+                    "file_path": rendered_clip.file_path,
+                    "reconciliation_required": True,
+                },
+            )
+            self._persist_receipt(receipt)
+            return receipt
 
         except Exception as exc:
             logger.error(f"Failed delivering clip to OmniPost: {exc}")
@@ -385,6 +578,7 @@ class OmniPostPublisher(HandoffPublisher):
                 target_mode="omnipost",
                 dry_run=False,
                 response_payload={
+                    "video_id": candidate.video_id,
                     "exception": str(exc),
                     "title": title,
                     "file_path": rendered_clip.file_path,
@@ -396,17 +590,31 @@ class OmniPostPublisher(HandoffPublisher):
     def retry_failed_job(self, receipt_id: str) -> HandoffReceipt:
         """
         Safely re-attempts publication of a previously failed job.
-        Preserves idempotency and increments retry counters.
+        Blocks OUTCOME_UNKNOWN auto-retries and re-validates fresh DB rights before retrying.
         """
         receipt = self.get_receipt_by_id(receipt_id)
         if not receipt:
             raise ValueError(f"Publishing receipt {receipt_id} not found.")
+
+        if receipt.status == "OUTCOME_UNKNOWN":
+            raise PermissionError(
+                f"Receipt '{receipt_id}' has OUTCOME_UNKNOWN; automatic republishing is forbidden until reconciled."
+            )
 
         if receipt.status not in ("FAILED", "REJECTED"):
             logger.info(f"Receipt {receipt_id} is in status '{receipt.status}', retry not required.")
             return receipt
 
         payload = receipt.response_payload or {}
+        original_video_id = payload.get("video_id", "")
+        if is_legal_officer_enabled():
+            db_gate_error = self._check_fresh_db_revocation(original_video_id)
+            if db_gate_error:
+                receipt.status = "REJECTED"
+                payload["error"] = db_gate_error
+                receipt.response_payload = payload
+                self._persist_receipt(receipt)
+                raise PermissionError(db_gate_error)
         file_path = payload.get("file_path", "")
         title = payload.get("title", f"Retry Clip {receipt.clip_id}")
 
@@ -456,7 +664,7 @@ class OmniPostPublisher(HandoffPublisher):
             target_platforms = self.default_platforms
             candidate_stub = HighlightCandidate(
                 candidate_id=receipt.clip_id,
-                video_id="retry_video",
+                video_id=original_video_id or "retry_video",
                 start_seconds=0.0,
                 end_seconds=30.0,
                 duration_seconds=30.0,
@@ -507,9 +715,29 @@ class OmniPostPublisher(HandoffPublisher):
             history = []
             for r in rows:
                 payload = json.loads(r[7]) if r[7] else {}
-                title = payload.get("title") or f"Clip #{r[1]}"
-                video_url = payload.get("video_url") or payload.get("publicMediaUrl") or ""
+                # Extract deeply nested payload if present
+                inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
+                title = inner.get("title") or inner.get("hook_title") or payload.get("title")
+                
+                # If title is still missing or a raw placeholder like 'Clip #...', resolve human title
+                if not title or title.startswith("Clip #"):
+                    # Check candidate/video metadata from payload
+                    source_id = inner.get("source_id") or ""
+                    desc = inner.get("description") or ""
+                    if desc and ":" in desc:
+                        # Often "Highlight from hdMszZ2ah5Q: Now if you look at all of Apple's marketing..."
+                        candidate_phrase = desc.split(":", 1)[1].strip()
+                        title = candidate_phrase[:60]
+                    elif source_id:
+                        title = f"Highlight Short ({source_id})"
+                    else:
+                        title = f"Short Cut #{r[1]}"
+
+                video_url = payload.get("video_url") or payload.get("publicMediaUrl") or inner.get("asset_path") or ""
                 err = payload.get("error") or payload.get("exception") or ""
+                source_id = inner.get("source_id") or ""
+                duration_seconds = inner.get("duration_seconds") or 0.0
+
                 history.append({
                     "receipt_id": r[0],
                     "clip_id": r[1],
@@ -519,6 +747,8 @@ class OmniPostPublisher(HandoffPublisher):
                     "target_mode": r[5],
                     "dry_run": bool(r[6]),
                     "title": title,
+                    "source_id": source_id,
+                    "duration_seconds": duration_seconds,
                     "video_url": video_url,
                     "error": err,
                     "payload": payload,

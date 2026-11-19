@@ -16,14 +16,67 @@ class RightsBasis(str, Enum):
     OWNED = "OWNED"
     EXPLICIT_PERMISSION = "EXPLICIT_PERMISSION"
     CREATIVE_COMMONS = "CREATIVE_COMMONS"
+    VERIFIED_LICENSE = "VERIFIED_LICENSE"
+    COMMENTARY_TRANSFORM = "COMMENTARY_TRANSFORM"
     OPERATOR_ASSET = "OPERATOR_ASSET"
+    AI_GENERATED_ORIGINAL = "AI_GENERATED_ORIGINAL"
+
+
+VERIFIABLE_RIGHTS_BASES = {
+    RightsBasis.OWNED,
+    RightsBasis.EXPLICIT_PERMISSION,
+    RightsBasis.CREATIVE_COMMONS,
+    RightsBasis.VERIFIED_LICENSE,
+    RightsBasis.AI_GENERATED_ORIGINAL,
+}
 
 
 class RightsStatus(str, Enum):
+    UNKNOWN = "UNKNOWN"
     VERIFIED = "VERIFIED"
     PENDING_REVIEW = "PENDING_REVIEW"
     REJECTED = "REJECTED"
     REVOKED = "REVOKED"
+    EXPIRED = "EXPIRED"
+
+
+class ComplianceProfile(str, Enum):
+    STRICT_LICENSED = "STRICT_LICENSED"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    COMMENTARY_REVIEW = "COMMENTARY_REVIEW"
+
+
+class PipelineState(str, Enum):
+    DISCOVERED = "DISCOVERED"
+    VALIDATING = "VALIDATING"
+    BLOCKED = "BLOCKED"
+    READY_FOR_PROCESSING = "READY_FOR_PROCESSING"
+    PROCESSING = "PROCESSING"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    APPROVED = "APPROVED"
+    READY_TO_PUBLISH = "READY_TO_PUBLISH"
+    PUBLISHING = "PUBLISHING"
+    PUBLISHED = "PUBLISHED"
+    FAILED = "FAILED"
+    REVOKED = "REVOKED"
+    OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
+
+
+PIPELINE_TRANSITIONS: Dict[PipelineState, set] = {
+    PipelineState.DISCOVERED: {PipelineState.VALIDATING, PipelineState.BLOCKED, PipelineState.REVOKED, PipelineState.FAILED},
+    PipelineState.VALIDATING: {PipelineState.READY_FOR_PROCESSING, PipelineState.BLOCKED, PipelineState.REVIEW_REQUIRED, PipelineState.REVOKED, PipelineState.FAILED},
+    PipelineState.BLOCKED: {PipelineState.VALIDATING, PipelineState.REVOKED},
+    PipelineState.READY_FOR_PROCESSING: {PipelineState.PROCESSING, PipelineState.BLOCKED, PipelineState.REVOKED, PipelineState.FAILED},
+    PipelineState.PROCESSING: {PipelineState.REVIEW_REQUIRED, PipelineState.APPROVED, PipelineState.BLOCKED, PipelineState.REVOKED, PipelineState.FAILED},
+    PipelineState.REVIEW_REQUIRED: {PipelineState.APPROVED, PipelineState.BLOCKED, PipelineState.REVOKED, PipelineState.FAILED},
+    PipelineState.APPROVED: {PipelineState.READY_TO_PUBLISH, PipelineState.REVIEW_REQUIRED, PipelineState.BLOCKED, PipelineState.REVOKED},
+    PipelineState.READY_TO_PUBLISH: {PipelineState.PUBLISHING, PipelineState.BLOCKED, PipelineState.REVOKED, PipelineState.FAILED},
+    PipelineState.PUBLISHING: {PipelineState.PUBLISHED, PipelineState.FAILED, PipelineState.OUTCOME_UNKNOWN, PipelineState.REVOKED},
+    PipelineState.PUBLISHED: {PipelineState.REVOKED},
+    PipelineState.OUTCOME_UNKNOWN: {PipelineState.PUBLISHED, PipelineState.FAILED, PipelineState.REVOKED},
+    PipelineState.FAILED: {PipelineState.VALIDATING, PipelineState.READY_FOR_PROCESSING, PipelineState.REVOKED},
+    PipelineState.REVOKED: set(),
+}
 
 
 class JobStage(str, Enum):
@@ -34,16 +87,23 @@ class JobStage(str, Enum):
     SEGMENTED = "SEGMENTED"
     SCORED = "SCORED"
     REVIEWED = "REVIEWED"
+    COMMENTARY_GENERATED = "COMMENTARY_GENERATED"
     RENDERED = "RENDERED"
     QA_VERIFIED = "QA_VERIFIED"
     HANDED_OFF = "HANDED_OFF"
+    BLOCKED = "BLOCKED"
+    REVOKED = "REVOKED"
     FAILED = "FAILED"
 
 
 class JobStatus(str, Enum):
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
     SUCCEEDED = "SUCCEEDED"
+    BLOCKED = "BLOCKED"
+    REVOKED = "REVOKED"
+    OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
     FAILED = "FAILED"
     RETRY_PENDING = "RETRY_PENDING"
 
@@ -120,15 +180,43 @@ class RightsManifest:
     basis: RightsBasis
     status: RightsStatus
     owner_name: str
+    creator_id: str = ""
+    license_id: str = ""
     license_url: str = ""
     proof_reference: str = ""
+    evidence_type: str = ""
     permitted_platforms: List[str] = field(default_factory=lambda: ["YouTube Shorts", "TikTok", "Instagram Reels"])
     valid_until: Optional[str] = None  # ISO format string or None if indefinite
     verified_at: Optional[str] = None
+    verified_by: str = ""
+    revoked_at: Optional[str] = None
+    revoked_by: str = ""
+    revocation_reason: str = ""
+    compliance_profile: str = ComplianceProfile.STRICT_LICENSED.value
+    attribution_requirements: Dict[str, Any] = field(default_factory=dict)
     audit_notes: str = ""
 
+    def effective_status(self, as_of: Optional[datetime] = None) -> RightsStatus:
+        if self.revoked_at or self.status == RightsStatus.REVOKED:
+            return RightsStatus.REVOKED
+        if self.basis not in VERIFIABLE_RIGHTS_BASES:
+            return RightsStatus.REJECTED if self.status == RightsStatus.REJECTED else RightsStatus.PENDING_REVIEW
+        if self.valid_until and self.status == RightsStatus.VERIFIED:
+            check_time = as_of or datetime.now(timezone.utc)
+            try:
+                dt = datetime.fromisoformat(self.valid_until.replace("Z", "+00:00"))
+                if check_time > dt:
+                    return RightsStatus.EXPIRED
+            except ValueError:
+                return RightsStatus.EXPIRED
+        return self.status
+
     def is_valid(self, as_of: Optional[datetime] = None) -> bool:
+        if self.revoked_at:
+            return False
         if self.status != RightsStatus.VERIFIED:
+            return False
+        if self.basis not in VERIFIABLE_RIGHTS_BASES:
             return False
         if self.valid_until:
             check_time = as_of or datetime.now(timezone.utc)
@@ -148,12 +236,138 @@ class RightsManifest:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> RightsManifest:
-        data_copy = dict(data)
+        data_copy = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         if isinstance(data_copy.get("basis"), str):
             data_copy["basis"] = RightsBasis(data_copy["basis"])
         if isinstance(data_copy.get("status"), str):
             data_copy["status"] = RightsStatus(data_copy["status"])
         return cls(**data_copy)
+
+
+@dataclass
+class LicenseMetadata:
+    license_id: str = "youtube"  # e.g., "creativeCommon", "youtube", "unknown"
+    license_name: str = "Standard YouTube License"
+    license_url: str = ""
+    license_version: str = ""
+    embeddable: bool = True
+    made_for_kids: bool = False
+    privacy_status: str = "public"
+    category_id: str = ""
+    region_restrictions: Dict[str, Any] = field(default_factory=dict)
+    source_url: str = ""
+    creator_id: str = ""
+    verified_at: Optional[str] = None
+    verification_status: str = "UNVERIFIED"
+    attribution_required: bool = True
+    changes_notice_required: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> LicenseMetadata:
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class AttributionRequirements:
+    creator_name: str
+    creator_handle: str = ""
+    creator_id: str = ""
+    source_title: str = ""
+    source_url: str = ""
+    license_id: str = ""
+    license_url: str = ""
+    changes_made: str = ""
+    required_credit_line: str = ""
+    required_notices: List[str] = field(default_factory=list)
+    validated: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> AttributionRequirements:
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class AudioRiskAssessment:
+    assessment_id: str
+    video_id: str
+    clip_id: str = ""
+    match_status: str = "UNABLE_TO_ANALYZE"  # DETECTED_MATCH | POSSIBLE_MATCH | NO_MATCH_DETECTED | UNABLE_TO_ANALYZE
+    risk_level: str = "REVIEW_REQUIRED"      # HIGH | MEDIUM | LOW | REVIEW_REQUIRED
+    flagged_segments: List[Dict[str, Any]] = field(default_factory=list)
+    detected_tracks: List[Dict[str, Any]] = field(default_factory=list)
+    review_required: bool = True
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    replacement_audio_path: Optional[str] = None
+    disclaimer: str = "A missing match is not proof that the audio is copyright-free."
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> AudioRiskAssessment:
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class AssetManifest:
+    """Canonical cross-service manifest shared between clipping engine and OmniPost."""
+    asset_id: str
+    source_id: str
+    original_source_url: str
+    creator_id: str
+    license_metadata: LicenseMetadata = field(default_factory=LicenseMetadata)
+    rights_basis: RightsBasis = RightsBasis.OPERATOR_ASSET
+    rights_status: RightsStatus = RightsStatus.PENDING_REVIEW
+    rights_id: str = ""
+    evidence_references: List[str] = field(default_factory=list)
+    compliance_profile: ComplianceProfile = ComplianceProfile.STRICT_LICENSED
+    processing_history: List[Dict[str, Any]] = field(default_factory=list)
+    transformation_history: List[Dict[str, Any]] = field(default_factory=list)
+    attribution_requirements: Optional[AttributionRequirements] = None
+    audio_risk: Optional[AudioRiskAssessment] = None
+    approval_status: str = "PENDING_REVIEW"  # PENDING_REVIEW | APPROVED | REJECTED | REVOKED
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    content_hash: str = ""
+    generated_outputs: List[Dict[str, Any]] = field(default_factory=list)
+    pipeline_state: PipelineState = PipelineState.DISCOVERED
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["rights_basis"] = self.rights_basis.value
+        d["rights_status"] = self.rights_status.value
+        d["compliance_profile"] = self.compliance_profile.value
+        d["pipeline_state"] = self.pipeline_state.value
+        return d
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> AssetManifest:
+        d = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        if isinstance(d.get("license_metadata"), dict):
+            d["license_metadata"] = LicenseMetadata.from_dict(d["license_metadata"])
+        if isinstance(d.get("rights_basis"), str):
+            d["rights_basis"] = RightsBasis(d["rights_basis"])
+        if isinstance(d.get("rights_status"), str):
+            d["rights_status"] = RightsStatus(d["rights_status"])
+        if isinstance(d.get("compliance_profile"), str):
+            d["compliance_profile"] = ComplianceProfile(d["compliance_profile"])
+        if isinstance(d.get("pipeline_state"), str):
+            d["pipeline_state"] = PipelineState(d["pipeline_state"])
+        if isinstance(d.get("attribution_requirements"), dict):
+            d["attribution_requirements"] = AttributionRequirements.from_dict(d["attribution_requirements"])
+        if isinstance(d.get("audio_risk"), dict):
+            d["audio_risk"] = AudioRiskAssessment.from_dict(d["audio_risk"])
+        return cls(**d)
 
 
 @dataclass(frozen=True)
@@ -457,7 +671,7 @@ class RenderProfile:
     outro_chime_style: str = "soft_zen"   # soft_zen, soft_double, classic_bell
     # Pacing and Broadcast Polish
     enable_pacing_polish: bool = True
-    enable_flux: bool = True               # Strategic FLUX.1 creative visual asset generation
+    enable_flux: bool = False              # Strategic FLUX creative visual asset generation (purged/disabled)
     audio_fade_in_seconds: float = 0.02   # 20ms anti-pop audio transition
     audio_fade_out_seconds: float = 0.25  # 250ms outro audio transition
     video_fade_in_seconds: float = 0.15   # 150ms subtle hook fade-in
@@ -581,6 +795,8 @@ class ClipJob:
     retry_count: int = 0
     max_retries: int = 3
     rights_manifest: Optional[RightsManifest] = None
+    asset_manifest: Optional[AssetManifest] = None
+    source_metadata: Optional[Dict[str, Any]] = None
     candidate: Optional[HighlightCandidate] = None
     rendered_clip: Optional[RenderedClip] = None
     qa_report: Optional[QAReport] = None
@@ -619,6 +835,8 @@ class ClipJob:
             "retry_count": self.retry_count,
             "max_retries": self.max_retries,
             "rights_manifest": self.rights_manifest.to_dict() if self.rights_manifest else None,
+            "asset_manifest": self.asset_manifest.to_dict() if self.asset_manifest else None,
+            "source_metadata": self.source_metadata,
             "candidate": self.candidate.to_dict() if self.candidate else None,
             "rendered_clip": self.rendered_clip.to_dict() if self.rendered_clip else None,
             "qa_report": self.qa_report.to_dict() if self.qa_report else None,
@@ -639,6 +857,8 @@ class ClipJob:
             retry_count=data.get("retry_count", 0),
             max_retries=data.get("max_retries", 3),
             rights_manifest=RightsManifest.from_dict(data["rights_manifest"]) if data.get("rights_manifest") else None,
+            asset_manifest=AssetManifest.from_dict(data["asset_manifest"]) if data.get("asset_manifest") else None,
+            source_metadata=data.get("source_metadata"),
             candidate=HighlightCandidate.from_dict(data["candidate"]) if data.get("candidate") else None,
             rendered_clip=RenderedClip.from_dict(data["rendered_clip"]) if data.get("rendered_clip") else None,
             qa_report=QAReport.from_dict(data["qa_report"]) if data.get("qa_report") else None,

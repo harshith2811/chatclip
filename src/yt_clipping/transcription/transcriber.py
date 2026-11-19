@@ -11,8 +11,44 @@ import os
 import sys
 import time
 import dataclasses
+import threading
+import gc
 from ..contracts.models import Transcript, TranscriptSegment, WordTimestamp
 from ..contracts.interfaces import Transcriber
+from ..utils.timeline import sanitize_transcript
+from ..utils.file_ops import atomic_replace, safe_remove
+
+_WHISPER_MODEL_CACHE: Dict[Tuple[str, str, str, str], Any] = {}
+_WHISPER_CACHE_LOCK = threading.Lock()
+
+
+def release_whisper_models() -> None:
+    """Explicitly releases cached WhisperModel instances and frees CUDA VRAM."""
+    with _WHISPER_CACHE_LOCK:
+        _WHISPER_MODEL_CACHE.clear()
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _get_cached_whisper_model(model_size: str, device: str, compute_type: str, download_root: Optional[str]) -> Any:
+    key = (model_size, device, compute_type, str(download_root))
+    with _WHISPER_CACHE_LOCK:
+        if key in _WHISPER_MODEL_CACHE:
+            return _WHISPER_MODEL_CACHE[key]
+    from faster_whisper import WhisperModel
+    model = WhisperModel(model_size, device=device, compute_type=compute_type, download_root=download_root)
+    with _WHISPER_CACHE_LOCK:
+        # Bounded cache of at most 2 model instances
+        if len(_WHISPER_MODEL_CACHE) >= 2:
+            _WHISPER_MODEL_CACHE.clear()
+            gc.collect()
+        _WHISPER_MODEL_CACHE[key] = model
+    return model
 
 # PyAV 14+/19+ Compatibility Shim: faster-whisper passes metadata_errors="ignore"
 # which newer PyAV versions reject with TypeError.
@@ -94,7 +130,7 @@ class LocalTranscriber(Transcriber):
 
     def register_mock_transcript(self, video_id: str, transcript: Transcript) -> None:
         """Stores a mock transcript for testing/fixtures."""
-        self._mock_transcripts[video_id] = transcript
+        self._mock_transcripts[video_id] = sanitize_transcript(transcript)
 
     def _get_cache_path(self, video_id: str) -> str:
         return os.path.join(self.cache_dir, f"{video_id}.json")
@@ -106,18 +142,23 @@ class LocalTranscriber(Transcriber):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    return Transcript.from_dict(data)
+                    return sanitize_transcript(Transcript.from_dict(data))
             except Exception:
                 return None
         return None
 
     def save_to_cache(self, transcript: Transcript) -> None:
         """Saves transcript to disk cache atomically."""
-        path = self._get_cache_path(transcript.video_id)
+        sanitized = sanitize_transcript(transcript)
+        path = self._get_cache_path(sanitized.video_id)
         temp_path = f"{path}.tmp"
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump(transcript.to_dict(), f, indent=2)
-        os.replace(temp_path, path)
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(sanitized.to_dict(), f, indent=2)
+            atomic_replace(temp_path, path)
+        finally:
+            if os.path.exists(temp_path):
+                safe_remove(temp_path)
 
     def _try_faster_whisper(
         self, media_path: str, video_id: str, device: str, compute_type: str
@@ -134,11 +175,10 @@ class LocalTranscriber(Transcriber):
                     av.open = _safe_av
             except Exception:
                 pass
-            from faster_whisper import WhisperModel
             start_t = time.time()
             models_whisper_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../models/whisper"))
             download_root = os.environ.get("WHISPER_DOWNLOAD_ROOT") or (models_whisper_dir if os.path.exists(models_whisper_dir) else None)
-            model = WhisperModel(self.model_size, device=device, compute_type=compute_type, download_root=download_root)
+            model = _get_cached_whisper_model(self.model_size, device=device, compute_type=compute_type, download_root=download_root)
             segments_raw, info = model.transcribe(media_path, word_timestamps=True)
 
             segments: List[TranscriptSegment] = []
@@ -177,19 +217,12 @@ class LocalTranscriber(Transcriber):
                     model_version=f"{self.model_size} ({elapsed:.1f}s)",
                 )
                 t = self.diarization.annotate(t)
-                return t, None
+                return sanitize_transcript(t), None
             return None, "No speech segments detected in media."
         except Exception as e:
             err_msg = str(e)
             if "out of memory" in err_msg.lower() or "cuda" in err_msg.lower():
-                try:
-                    import gc
-                    gc.collect()
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    pass
+                release_whisper_models()
             return None, err_msg
 
     def transcribe(self, media_path: str, video_id: str) -> Transcript:
@@ -216,7 +249,7 @@ class LocalTranscriber(Transcriber):
         if os.path.exists(sidecar_json):
             with open(sidecar_json, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                t = Transcript.from_dict(data)
+                t = sanitize_transcript(Transcript.from_dict(data))
                 self.save_to_cache(t)
                 return t
 

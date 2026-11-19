@@ -21,6 +21,8 @@ import tempfile
 import logging
 import json
 import re
+from ..utils.file_ops import safe_remove, safe_rmtree, atomic_replace
+from .encoder_config import get_encoder_args, is_nvenc
 
 logger = logging.getLogger(__name__)
 
@@ -273,81 +275,84 @@ Dialogue: 1,{prompt_in_str},{dur_str},FooterPrompt,,0,0,0,,{{\\fad(200,200)}}{ct
         os.makedirs(os.path.dirname(os.path.abspath(output_mp4_path)), exist_ok=True)
 
         temp_dir = tempfile.mkdtemp(prefix="outro_card_")
-        ass_path = os.path.join(temp_dir, "outro_anim.ass")
-        self.generate_outro_ass(cfg, output_ass_path=ass_path)
-
-        escaped_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-        w, h = cfg.width, cfg.height
-        dur = cfg.duration
-        fps = cfg.fps
-        delay_ms = int(cfg.button_transform_time * 1000)
-
-        # Build FFmpeg command inputs and filtergraphs
-        cmd: list[str] = ["ffmpeg", "-y"]
-
-        # Background video input
-        if background_image_path and os.path.exists(background_image_path):
-            cmd.extend(["-loop", "1", "-t", f"{dur:.2f}", "-i", background_image_path])
-            vf = (
-                f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
-                f"boxblur=45:5,drawbox=x=0:y=0:w={w}:h={h}:color=0x060913@0.82:t=fill,"
-                f"subtitles='{escaped_ass}'[v]"
-            )
-        else:
-            cmd.extend(["-f", "lavfi", "-i", f"color=c=0x0B0F19:s={w}x{h}:d={dur:.2f}:r={fps}"])
-            vf = (
-                f"[0:v]drawbox=x=0:y=0:w={w}:h={h}:color=0x0F172A@0.5:t=fill,"
-                f"subtitles='{escaped_ass}'[v]"
-            )
-
-        # Audio input (synthesized bell chime)
-        if cfg.enable_chime:
-            chime_wav_path = os.path.join(temp_dir, "bell_chime.wav")
-            synthesize_bell_chime(
-                chime_wav_path,
-                duration=1.8,
-                sample_rate=44100,
-                f0=cfg.chime_freq,
-                chime_style=getattr(cfg, "chime_style", "soft_zen"),
-            )
-            cmd.extend(["-i", chime_wav_path])
-            af = f"[1:a]adelay={delay_ms}|{delay_ms},apad=whole_dur={dur:.2f},atrim=0:{dur:.2f}[a]"
-        else:
-            cmd.extend(["-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo", "-t", f"{dur:.2f}"])
-            af = f"[1:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{dur:.2f}[a]"
-
-        filter_complex = f"{vf};{af}"
-
-        # Test whether requested encoder works or fallback
-        test_vcodec = vcodec
-        cmd.extend([
-            "-filter_complex", filter_complex,
-            "-map", "[v]",
-            "-map", "[a]",
-            "-c:v", test_vcodec,
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-pix_fmt", "yuv420p",
-            "-r", str(int(fps)),
-            "-t", f"{dur:.2f}",
-            output_mp4_path,
-        ])
-
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as exc:
-            # Fallback to libx264 if NVENC fails
-            if test_vcodec != "libx264":
-                idx = cmd.index(test_vcodec)
-                cmd[idx] = "libx264"
-                subprocess.run(cmd, capture_output=True, text=True, check=True)
+            ass_path = os.path.join(temp_dir, "outro_anim.ass")
+            self.generate_outro_ass(cfg, output_ass_path=ass_path)
+
+            escaped_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+            w, h = cfg.width, cfg.height
+            dur = cfg.duration
+            fps = cfg.fps
+            delay_ms = int(cfg.button_transform_time * 1000)
+
+            # Build FFmpeg command inputs and filtergraphs
+            cmd: list[str] = ["ffmpeg", "-y"]
+
+            # Background video input
+            if background_image_path and os.path.exists(background_image_path):
+                cmd.extend(["-loop", "1", "-t", f"{dur:.2f}", "-i", background_image_path])
+                vf = (
+                    f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
+                    f"boxblur=45:5,drawbox=x=0:y=0:w={w}:h={h}:color=0x060913@0.82:t=fill,"
+                    f"subtitles='{escaped_ass}'[v]"
+                )
             else:
-                if os.path.exists(output_mp4_path) and os.path.getsize(output_mp4_path) == 0:
-                    try:
-                        os.remove(output_mp4_path)
-                    except OSError:
-                        pass
-                raise
+                cmd.extend(["-f", "lavfi", "-i", f"color=c=0x0B0F19:s={w}x{h}:d={dur:.2f}:r={fps}"])
+                vf = (
+                    f"[0:v]drawbox=x=0:y=0:w={w}:h={h}:color=0x0F172A@0.5:t=fill,"
+                    f"subtitles='{escaped_ass}'[v]"
+                )
+
+            # Audio input (synthesized bell chime)
+            if cfg.enable_chime:
+                chime_wav_path = os.path.join(temp_dir, "bell_chime.wav")
+                synthesize_bell_chime(
+                    chime_wav_path,
+                    duration=1.8,
+                    sample_rate=44100,
+                    f0=cfg.chime_freq,
+                    chime_style=getattr(cfg, "chime_style", "soft_zen"),
+                )
+                cmd.extend(["-i", chime_wav_path])
+                af = f"[1:a]adelay={delay_ms}|{delay_ms},apad=whole_dur={dur:.2f},atrim=0:{dur:.2f}[a]"
+            else:
+                cmd.extend(["-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo", "-t", f"{dur:.2f}"])
+                af = f"[1:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{dur:.2f}[a]"
+
+            filter_complex = f"{vf};{af}"
+
+            # Test whether requested encoder works or fallback
+            test_vcodec = vcodec
+            codec_args = get_encoder_args(test_vcodec, crf=20)
+            cmd.extend([
+                "-filter_complex", filter_complex,
+                "-map", "[v]",
+                "-map", "[a]",
+                *codec_args,
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-pix_fmt", "yuv420p",
+                "-r", str(int(fps)),
+                "-t", f"{dur:.2f}",
+                output_mp4_path,
+            ])
+
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=90)
+            except subprocess.CalledProcessError as exc:
+                # Fallback to libx264 if NVENC fails
+                if is_nvenc(test_vcodec):
+                    cpu_codec_args = get_encoder_args("libx264", crf=20)
+                    cmd_cpu = [c for c in cmd if c not in codec_args]
+                    idx = cmd_cpu.index("-map") + 2  # after second -map
+                    cmd_cpu[idx:idx] = cpu_codec_args
+                    subprocess.run(cmd_cpu, capture_output=True, text=True, check=True, timeout=90)
+                else:
+                    if os.path.exists(output_mp4_path) and os.path.getsize(output_mp4_path) == 0:
+                        safe_remove(output_mp4_path)
+                    raise
+        finally:
+            safe_rmtree(temp_dir)
 
         return output_mp4_path
 
@@ -384,6 +389,7 @@ Dialogue: 1,{prompt_in_str},{dur_str},FooterPrompt,,0,0,0,,{{\\fad(200,200)}}{ct
             "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]"
         )
 
+        codec_args = get_encoder_args(vcodec, crf=20)
         cmd = [
             "ffmpeg", "-y",
             "-i", main_clip_path,
@@ -391,7 +397,7 @@ Dialogue: 1,{prompt_in_str},{dur_str},FooterPrompt,,0,0,0,,{{\\fad(200,200)}}{ct
             "-filter_complex", filter_complex,
             "-map", "[v]",
             "-map", "[a]",
-            "-c:v", vcodec,
+            *codec_args,
             "-c:a", "aac",
             "-b:a", "192k",
             "-pix_fmt", "yuv420p",
@@ -399,39 +405,27 @@ Dialogue: 1,{prompt_in_str},{dur_str},FooterPrompt,,0,0,0,,{{\\fad(200,200)}}{ct
         ]
 
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=120)
         except subprocess.CalledProcessError as exc:
             # Fallback to libx264 if hardware encoder unavailable
-            if vcodec != "libx264":
-                idx = cmd.index(vcodec)
-                cmd[idx] = "libx264"
+            if is_nvenc(vcodec):
+                cpu_args = get_encoder_args("libx264", crf=20)
+                cmd_cpu = [c for c in cmd if c not in codec_args]
+                idx = cmd_cpu.index("-map") + 2
+                cmd_cpu[idx:idx] = cpu_args
                 try:
-                    subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    subprocess.run(cmd_cpu, capture_output=True, text=True, check=True, timeout=120)
                 except subprocess.CalledProcessError:
-                    if os.path.exists(tmp_output):
-                        try:
-                            os.remove(tmp_output)
-                        except OSError:
-                            pass
+                    safe_remove(tmp_output)
                     raise
             else:
-                if os.path.exists(tmp_output):
-                    try:
-                        os.remove(tmp_output)
-                    except OSError:
-                        pass
+                safe_remove(tmp_output)
                 raise
 
         if os.path.exists(tmp_output) and os.path.getsize(tmp_output) > 0:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-            os.rename(tmp_output, output_path)
+            atomic_replace(tmp_output, output_path)
         else:
-            if os.path.exists(tmp_output):
-                try:
-                    os.remove(tmp_output)
-                except OSError:
-                    pass
+            safe_remove(tmp_output)
             raise RuntimeError(f"FFmpeg failed to produce valid concatenated video: {output_path}")
 
         return output_path

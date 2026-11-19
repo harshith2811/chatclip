@@ -36,9 +36,10 @@ def test_pipeline_get_candidates_without_rendering(tmp_path):
     manifest = RightsManifest(
         rights_id=f"rights-{video_id}",
         video_id=video_id,
-        basis=RightsBasis.OPERATOR_ASSET,
+        basis=RightsBasis.OWNED,
         status=RightsStatus.VERIFIED,
         owner_name="Test Owner",
+        proof_reference="test-fixture-owned",
     )
     with open(ledger_file, "w", encoding="utf-8") as f:
         json.dump([manifest.to_dict()], f)

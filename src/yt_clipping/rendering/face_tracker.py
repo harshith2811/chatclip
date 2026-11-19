@@ -27,13 +27,13 @@ from .trajectory import (
 class FaceFocusedFramer:
     """
     Computes smooth, face-focused 9:16 crop coordinates from source video.
-    Supports both AutoFlip-inspired constrained trajectory optimization
-    and legacy EMA temporal smoothing.
+    Supports high-framerate sampling (12-15 FPS), false-positive artifact rejection,
+    AutoFlip-inspired constrained trajectory optimization, and intelligent layout routing.
     """
 
     def __init__(
         self,
-        sample_fps: float = 3.0,
+        sample_fps: float = 12.0,
         ema_alpha: float = 0.20,
         scene_jump_threshold: float = 0.35,  # Fraction of width jump to trigger cut reset
         yunet_model_path: Optional[str] = None,
@@ -42,14 +42,16 @@ class FaceFocusedFramer:
         max_pan_acceleration: float = 750.0,
         deadband_px: float = 24.0,
         optimizer_config: Optional[TrajectoryConfig] = None,
+        min_face_ratio: float = 0.045,  # Min face dimension as fraction of frame height
     ):
-        self.sample_fps = sample_fps
+        self.sample_fps = max(1.0, float(sample_fps))
         self.ema_alpha = ema_alpha
         self.scene_jump_threshold = scene_jump_threshold
         self.smoothing_mode = smoothing_mode.lower()
         self.max_pan_velocity = max_pan_velocity
         self.max_pan_acceleration = max_pan_acceleration
         self.deadband_px = deadband_px
+        self.min_face_ratio = min_face_ratio
         self.model_type = "haar_cascade"
 
         # Initialize Trajectory Optimizer if constrained mode
@@ -165,12 +167,15 @@ class FaceFocusedFramer:
         scene_cuts: List[float] = [0.0]
 
         for i in range(total_frames):
-            ret, frame = cap.read()
-            if not ret:
-                break
-
             if i % frame_step != 0:
+                # Accelerated sampling: skip pixel decoding for unneeded intermediate frames
+                if not cap.grab():
+                    break
                 continue
+
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                break
 
             num_samples += 1
             t_rel = float(i) / fps
@@ -193,18 +198,32 @@ class FaceFocusedFramer:
             # 1. Primary: YuNet Deep Learning Face Detector
             if self.yunet is not None:
                 try:
-                    self.yunet.setInputSize((frame.shape[1], frame.shape[0]))
-                    _, faces = self.yunet.detect(frame)
+                    h_orig, w_orig = frame.shape[:2]
+                    infer_scale = 1.0
+                    if w_orig > 960:
+                        infer_scale = 960.0 / float(w_orig)
+                        small_yunet = cv2.resize(frame, (0, 0), fx=infer_scale, fy=infer_scale)
+                    else:
+                        small_yunet = frame
+
+                    self.yunet.setInputSize((small_yunet.shape[1], small_yunet.shape[0]))
+                    _, faces = self.yunet.detect(small_yunet)
                     if faces is not None and len(faces) > 0:
-                        best_face = max(faces, key=lambda f: f[2] * f[3])
-                        fx = int(best_face[0] + best_face[2] / 2.0)
-                        focal_x = fx
-                        face_detected_count += 1
-                        subject_detected_count += 1
-                        if len(faces) >= 2:
-                            fxs = sorted([f[0] + f[2] / 2.0 for f in faces])
-                            if (fxs[-1] - fxs[0]) > (crop_w * 0.75):
-                                multi_subject_count += 1
+                        if infer_scale != 1.0:
+                            faces = faces / infer_scale
+                        # Filter out micro-artifacts (avatars, browser icons, UI buttons)
+                        min_dim = float(h_orig) * self.min_face_ratio
+                        valid_faces = [f for f in faces if f[2] >= min_dim and f[3] >= min_dim]
+                        if valid_faces:
+                            best_face = max(valid_faces, key=lambda f: f[2] * f[3])
+                            fx = int(best_face[0] + best_face[2] / 2.0)
+                            focal_x = fx
+                            face_detected_count += 1
+                            subject_detected_count += 1
+                            if len(valid_faces) >= 2:
+                                fxs = sorted([f[0] + f[2] / 2.0 for f in valid_faces])
+                                if (fxs[-1] - fxs[0]) > (crop_w * 0.75):
+                                    multi_subject_count += 1
                 except Exception:
                     pass
 
@@ -213,18 +232,21 @@ class FaceFocusedFramer:
                 scale = 0.5
                 small_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
                 gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+                min_face_px = max(45, int(src_h * self.min_face_ratio))
                 faces = self.face_cascade.detectMultiScale(
                     gray,
                     scaleFactor=1.15,
-                    minNeighbors=4,
-                    minSize=(int(30 * scale), int(30 * scale)),
+                    minNeighbors=5,
+                    minSize=(int(min_face_px * scale), int(min_face_px * scale)),
                 )
                 if len(faces) > 0:
-                    best_face = max(faces, key=lambda f: f[2] * f[3])
-                    fx = int((best_face[0] + best_face[2] / 2.0) / scale)
-                    focal_x = fx
-                    face_detected_count += 1
-                    subject_detected_count += 1
+                    valid_haar = [f for f in faces if (f[2] / scale) >= min_face_px and (f[3] / scale) >= min_face_px]
+                    if valid_haar:
+                        best_face = max(valid_haar, key=lambda f: f[2] * f[3])
+                        fx = int((best_face[0] + best_face[2] / 2.0) / scale)
+                        focal_x = fx
+                        face_detected_count += 1
+                        subject_detected_count += 1
 
             # 3. Tertiary: YOLOv8 Person & Subject Saliency
             if self.subject_segmenter is not None:
@@ -310,7 +332,7 @@ class FaceFocusedFramer:
                     for k in range(len(shot_crops) - 2, -1, -1):
                         t_bound = shot_crops[k][1]
                         x_val = shot_crops[k][2]
-                        expr = f"if(lt(t,{t_bound:.2f}),{x_v},{expr})"
+                        expr = f"if(lt(t,{t_bound:.2f}),{x_val},{expr})"
                     dynamic_crop_filter = f"crop={crop_w}:{crop_h}:'{expr}':0"
             elif len(time_positions) >= 2:
                 first_half = [x for t_pos, x in time_positions if t_pos < duration_seconds * 0.5]

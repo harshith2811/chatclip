@@ -17,6 +17,7 @@ import urllib.request
 from datetime import datetime, timezone
 import numpy as np
 from dotenv import load_dotenv
+from ..utils.file_ops import atomic_replace, safe_remove
 
 load_dotenv()
 
@@ -115,12 +116,15 @@ class HeatmapAnalyzer:
             global_peak=global_peak,
         )
 
-        # Cache result to disk
-        try:
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(heatmap_data.to_dict(), f, indent=2)
-        except Exception:
-            pass
+        # Cache authentic results to disk atomically (do not permanently cache synthetic fallbacks)
+        if source_tag != "SYNTHETIC_SPEECH_DENSITY":
+            tmp_cache = f"{cache_path}.tmp"
+            try:
+                with open(tmp_cache, "w", encoding="utf-8") as f:
+                    json.dump(heatmap_data.to_dict(), f, indent=2)
+                atomic_replace(tmp_cache, cache_path)
+            except Exception:
+                safe_remove(tmp_cache)
 
         return heatmap_data
 
@@ -447,21 +451,59 @@ class HeatmapAnalyzer:
             best_start = ideal_start
             best_end = ideal_end
         else:
-            # Search for closest sentence start before ideal_start
-            best_start = ideal_start
-            min_st_diff = float("inf")
+            # Retention-Hook Co-Optimization:
+            # 1. Search for best conversational hook within [center_time - 38, center_time - 3]
+            candidate_hooks = []
             for seg in transcript.segments:
-                if abs(seg.start - ideal_start) < min_st_diff and seg.start <= center_time:
-                    min_st_diff = abs(seg.start - ideal_start)
-                    best_start = seg.start
+                if (center_time - 38.0) <= seg.start <= (center_time - 3.0):
+                    txt_lower = seg.text.strip().lower()
+                    h_val = 4.0
+                    if any(txt_lower.startswith(q) for q in ("why", "how", "what", "is ", "are ", "can ")):
+                        h_val += 3.0
+                    if any(bh in txt_lower for bh in ("but then", "but if", "but look", "but here", "turns out", "actually", "interesting")):
+                        h_val += 3.5
+                    if any(ba in txt_lower for ba in ("never", "always", "the first", "every", "nobody", "look at")):
+                        h_val += 2.0
+                    # Proximity sweet spot: prefer hooks that naturally lead into the peak (10-28s before)
+                    lead_in_dur = center_time - seg.start
+                    if 10.0 <= lead_in_dur <= 28.0:
+                        h_val += 2.0
+                    candidate_hooks.append((h_val, seg.start))
+            
+            if candidate_hooks:
+                candidate_hooks.sort(key=lambda x: x[0], reverse=True)
+                best_start = candidate_hooks[0][1]
+            else:
+                best_start = ideal_start
+                min_st_diff = float("inf")
+                for seg in transcript.segments:
+                    if abs(seg.start - ideal_start) < min_st_diff and seg.start <= center_time:
+                        min_st_diff = abs(seg.start - ideal_start)
+                        best_start = seg.start
 
-            # Search for closest sentence end after ideal_end
-            best_end = ideal_end
-            min_et_diff = float("inf")
+            # 2. Search for clean thought completion after peak in [center_time + 4, center_time + 35]
+            candidate_payoffs = []
             for seg in transcript.segments:
-                if abs(seg.end - ideal_end) < min_et_diff and seg.end >= center_time:
-                    min_et_diff = abs(seg.end - ideal_end)
-                    best_end = seg.end
+                seg_dur = seg.end - best_start
+                if effective_min <= seg_dur <= effective_max and seg.end >= (center_time + 3.0):
+                    p_val = 4.0
+                    t_str = seg.text.strip()
+                    if t_str.endswith((".", "!", "?")):
+                        p_val += 3.0
+                    if any(m in t_str.lower() for m in ("that's", "so ", "because", "higher", "better", "overall", "works")):
+                        p_val += 1.5
+                    candidate_payoffs.append((p_val, seg.end))
+
+            if candidate_payoffs:
+                candidate_payoffs.sort(key=lambda x: x[0], reverse=True)
+                best_end = candidate_payoffs[0][1]
+            else:
+                best_end = ideal_end
+                min_et_diff = float("inf")
+                for seg in transcript.segments:
+                    if abs(seg.end - ideal_end) < min_et_diff and seg.end >= center_time:
+                        min_et_diff = abs(seg.end - ideal_end)
+                        best_end = seg.end
 
         # Enforce universal duration constraints
         dur = best_end - best_start

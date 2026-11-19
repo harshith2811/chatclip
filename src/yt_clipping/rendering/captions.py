@@ -32,6 +32,33 @@ def escape_ass_text(text: str) -> str:
     return cleaned.strip()
 
 
+def normalize_ass_color(color: str, default: str = "&H00FFFFFF&") -> str:
+    """
+    Normalizes color strings into standard ASS color override format: &HAABBGGRR&.
+    Strips redundant delimiters, handles CSS hex (#RRGGBB / #RRGGBBAA), and
+    prevents duplicate trailing ampersands (e.g. '&&').
+    """
+    if not color:
+        return default
+    s = color.strip()
+    s_clean = s.rstrip("&").lstrip("&").lstrip("H").lstrip("h").lstrip("#")
+    if len(s_clean) == 6:
+        if color.startswith("#"):
+            r, g, b = s_clean[0:2], s_clean[2:4], s_clean[4:6]
+            return f"&H00{b}{g}{r}&"
+        else:
+            return f"&H00{s_clean}&"
+    elif len(s_clean) == 8:
+        return f"&H{s_clean}&"
+
+    normalized = s if s.startswith("&H") or s.startswith("&h") else f"&H{s}"
+    if not normalized.endswith("&"):
+        normalized = f"{normalized}&"
+    while "&&" in normalized:
+        normalized = normalized.replace("&&", "&")
+    return normalized
+
+
 # Keyword sentiment categories for dynamic color accents
 DANGER_KEYWORDS = {
     "KILLER", "KILLING", "MURDER", "MURDERER", "MURDERING", "DEAD", "DEATH",
@@ -340,10 +367,13 @@ class SubtitleGenerator:
 
         events = []
         for seg in transcript.segments:
-            if seg.end < c_start or seg.start > c_end:
+            if seg.end <= c_start or seg.start >= c_end:
                 continue
 
-            words_in_seg = [w for w in seg.words if w.end >= c_start and w.start <= c_end]
+            words_in_seg = [
+                w for w in seg.words
+                if (w.end - c_start) > 0.01 and (c_end - w.start) > 0.01
+            ]
             if not words_in_seg:
                 # Segment fallback: phrase-level line
                 rel_start = max(seg.start - c_start, 0.0)
@@ -418,6 +448,8 @@ class SubtitleGenerator:
 
                                 if j == w_idx:
                                     active_color = self.get_active_word_color(clean_word)
+                                    norm_active = normalize_ass_color(active_color)
+                                    norm_primary = normalize_ass_color(self.primary_color)
                                     badge = self.get_emoji_badge(clean_word)
                                     word_display = f"{clean_word}{badge}"
                                     is_hook_opening = (w_rel_start <= 3.5 and getattr(getattr(candidate, "breakdown", None), "hook_score", 0.0) >= 7.5)
@@ -427,9 +459,9 @@ class SubtitleGenerator:
                                             if is_hook_opening
                                             else r"{\t(0,60,\fscx118\fscy118)\t(60,130,\fscx100\fscy100)}"
                                         )
-                                        styled_words.append(f"{bounce_tag}{{\\c{active_color}&}}{word_display}{{\\fscx100\\fscy100\\c{self.primary_color}&}}")
+                                        styled_words.append(f"{bounce_tag}{{\\c{norm_active}}}{word_display}{{\\fscx100\\fscy100\\c{norm_primary}}}")
                                     else:
-                                        styled_words.append(f"{{\\c{active_color}&}}{word_display}{{\\c{self.primary_color}&}}")
+                                        styled_words.append(f"{{\\c{norm_active}}}{word_display}{{\\c{norm_primary}}}")
                                 else:
                                     styled_words.append(clean_word)
 
@@ -442,7 +474,12 @@ class SubtitleGenerator:
                         clean_text = " ".join(words_formatted)
                         events.append(f"Dialogue: 0,{t_start},{t_end},Default,,0,0,0,,{clean_text}")
 
-        # Construct ASS script
+        # Construct ASS script with normalized style colors
+        style_primary = normalize_ass_color(self.primary_color).rstrip("&")
+        style_highlight = normalize_ass_color(self.highlight_color).rstrip("&")
+        style_outline = normalize_ass_color(self.outline_color).rstrip("&")
+        style_back = normalize_ass_color(self.back_color).rstrip("&")
+
         ass_content = f"""[Script Info]
 Title: Antigravity Vertical Shorts Captions
 ScriptType: v4.00+
@@ -452,7 +489,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{self.font_name},{self.font_size},{self.primary_color},{self.highlight_color},{self.outline_color},{self.back_color},{self.bold},0,0,0,100,100,0,0,1,{self.outline},{self.shadow},2,60,60,{self.margin_v},1
+Style: Default,{self.font_name},{self.font_size},{style_primary},{style_highlight},{style_outline},{style_back},{self.bold},0,0,0,100,100,0,0,1,{self.outline},{self.shadow},2,60,60,{self.margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

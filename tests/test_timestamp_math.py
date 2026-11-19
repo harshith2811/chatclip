@@ -83,3 +83,99 @@ def test_subtitle_timestamp_rollover_boundaries():
     assert SubtitleGenerator._format_timestamp_srt(59.9996) == "00:01:00,000"
     assert SubtitleGenerator._format_timestamp_srt(3661.05) == "01:01:01,050"
 
+
+def test_caption_word_boundary_overlap(tmp_path):
+    """Regression test for L06: word ending exactly at or before clip start must not be included."""
+    from src.yt_clipping.rendering.captions import SubtitleGenerator
+    from src.yt_clipping.contracts.models import Transcript, TranscriptSegment, WordTimestamp
+
+    # Clip is from 10.0 to 20.0
+    cand = HighlightCandidate(
+        candidate_id="c_overlap_test",
+        video_id="v_test",
+        start_seconds=10.0,
+        end_seconds=20.0,
+        duration_seconds=10.0,
+        score=85.0,
+        breakdown=ScoreBreakdown(),
+        hook_title="Test Overlap",
+    )
+
+    # Word 1 ends at 10.0 (outside clip), Word 2 starts at 10.05 (inside), Word 3 starts at 20.0 (outside)
+    seg = TranscriptSegment(
+        segment_id=1,
+        start=9.0,
+        end=21.0,
+        text="previous inside following",
+        words=[
+            WordTimestamp(word="previous", start=9.2, end=10.0),
+            WordTimestamp(word="inside", start=10.05, end=11.0),
+            WordTimestamp(word="following", start=20.0, end=20.8),
+        ]
+    )
+    transcript = Transcript(
+        video_id="v_test",
+        language="en",
+        duration_seconds=30.0,
+        text="previous inside following",
+        segments=[seg]
+    )
+
+    gen = SubtitleGenerator(style_preset="hormozi")
+    out_ass = str(tmp_path / "test_boundary.ass")
+    gen.generate_ass(cand, transcript, out_ass)
+
+    content = open(out_ass, "r", encoding="utf-8").read()
+    # 'PREVIOUS' and 'FOLLOWING' must NOT appear in dialogue events
+    assert "INSIDE" in content
+    assert "PREVIOUS" not in content
+    assert "FOLLOWING" not in content
+
+
+def test_ass_color_normalization(tmp_path):
+    """Regression test for L07: Custom ASS color format normalization and avoidance of duplicate '&&'."""
+    from src.yt_clipping.rendering.captions import SubtitleGenerator, normalize_ass_color
+    from src.yt_clipping.contracts.models import Transcript, TranscriptSegment, WordTimestamp
+
+    # Test standalone normalizer
+    assert normalize_ass_color("&H00FFFFFF&") == "&H00FFFFFF&"
+    assert normalize_ass_color("&H00FFFFFF&&") == "&H00FFFFFF&"
+    assert normalize_ass_color("#FF5500") == "&H000055FF&"
+    assert normalize_ass_color("00FFFF") == "&H0000FFFF&"
+
+    # Test in ASS generation with custom primary and highlight colors that include trailing ampersands
+    gen = SubtitleGenerator(
+        style_preset="hormozi",
+        primary_color="&H00FFFFFF&",
+        highlight_color="&H0000FFFF&",
+    )
+    cand = HighlightCandidate(
+        candidate_id="c_col",
+        video_id="v_col",
+        start_seconds=0.0,
+        end_seconds=5.0,
+        duration_seconds=5.0,
+        score=85.0,
+        breakdown=ScoreBreakdown(),
+        hook_title="Color Test",
+    )
+    seg = TranscriptSegment(
+        segment_id=1,
+        start=0.0,
+        end=5.0,
+        text="Hello world",
+        words=[
+            WordTimestamp(word="Hello", start=0.5, end=1.5),
+            WordTimestamp(word="world", start=1.6, end=2.5),
+        ]
+    )
+    transcript = Transcript(video_id="v_col", language="en", duration_seconds=5.0, text="Hello world", segments=[seg])
+    out_ass = str(tmp_path / "test_colors.ass")
+    gen.generate_ass(cand, transcript, out_ass)
+
+    content = open(out_ass, "r", encoding="utf-8").read()
+    # Ensure no malformed double ampersands
+    assert "&&" not in content
+    assert "{\\c&H" in content
+
+

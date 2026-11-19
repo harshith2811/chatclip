@@ -149,13 +149,15 @@ class VideoEditorEngine:
         aspect_ratio: str = "9:16",
         center_x: float = 0.5,
         center_y: float = 0.5,
+        layout_mode: str = "crop",
         text_overlay: Optional[str] = None,
         text_position: str = "top",
         output_file_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Renders an edited video clip with precision trimming, aspect ratio conversion,
-        and optional text overlay, guaranteeing audio/video synchronization.
+        Renders an edited video clip with precision trimming, aspect ratio conversion
+        (or blurred ambient background canvas), and optional text overlay,
+        guaranteeing audio/video synchronization.
         """
         if not os.path.exists(source_path):
             raise FileNotFoundError(f"Source video not found: {source_path}")
@@ -165,13 +167,11 @@ class VideoEditorEngine:
             raise ValueError(f"Invalid duration: start ({start_seconds}) must be strictly less than end ({end_seconds})")
 
         meta = self.get_video_metadata(source_path)
-        crop_filter, out_w, out_h = self.build_crop_filter(
-            meta["width"], meta["height"], aspect_ratio, center_x, center_y
-        )
-
-        filter_chains = [crop_filter]
+        cfg = TARGET_RESOLUTIONS.get(aspect_ratio, TARGET_RESOLUTIONS["9:16"])
+        out_w, out_h = cfg["width"], cfg["height"]
 
         temp_text_path = None
+        drawtext_filter = ""
         try:
             # Add optional text overlay
             if text_overlay and text_overlay.strip():
@@ -191,34 +191,67 @@ class VideoEditorEngine:
                 else:  # bottom
                     y_pos = "h*0.82"
 
-                drawtext = (
+                drawtext_filter = (
                     f"drawtext=textfile='{esc_tf_path}':fontcolor=white:fontsize=42:"
                     f"box=1:boxcolor=black@0.65:boxborderw=14:x=(w-text_w)/2:y={y_pos}"
                 )
-                filter_chains.append(drawtext)
-
-            full_filter = ",".join(filter_chains)
 
             if not output_file_path:
                 cid = f"clip_edit_{uuid.uuid4().hex[:8]}"
                 output_file_path = os.path.join(self.output_dir, f"{cid}.mp4")
 
-            # Command ensures frame-accurate seek and perfect A/V alignment
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-ss", f"{max(0.0, start_seconds):.3f}",
-                "-to", f"{end_seconds:.3f}",
-                "-i", source_path,
-                "-vf", full_filter,
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "20",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-avoid_negative_ts", "make_zero",
-                output_file_path,
-            ]
+            # Determine filter mode: blurred ambient background vs precision crop
+            if layout_mode == "blur_background" or layout_mode == "ambient_blur":
+                # Full 16:9 in center with flowing synchronized blurred 9:16 background
+                text_sub = f",{drawtext_filter}" if drawtext_filter else ""
+                filter_complex_str = (
+                    f"[0:v]split=2[in_bg][in_fg];"
+                    f"[in_bg]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,crop={out_w}:{out_h},boxblur=25:5[bg];"
+                    f"[in_fg]scale={out_w}:-2[fg];"
+                    f"[bg][fg]overlay=0:(H-h)/2[comp];"
+                    f"[comp]setsar=1{text_sub}[v]"
+                )
+                cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-ss", f"{max(0.0, start_seconds):.3f}",
+                    "-to", f"{end_seconds:.3f}",
+                    "-i", source_path,
+                    "-filter_complex", filter_complex_str,
+                    "-map", "[v]",
+                    "-map", "0:a?",
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "20",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-avoid_negative_ts", "make_zero",
+                    output_file_path,
+                ]
+            else:
+                crop_filter, _, _ = self.build_crop_filter(
+                    meta["width"], meta["height"], aspect_ratio, center_x, center_y
+                )
+                filter_chains = [crop_filter]
+                if drawtext_filter:
+                    filter_chains.append(drawtext_filter)
+                full_filter = ",".join(filter_chains)
+
+                cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-ss", f"{max(0.0, start_seconds):.3f}",
+                    "-to", f"{end_seconds:.3f}",
+                    "-i", source_path,
+                    "-vf", full_filter,
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "20",
+                    "-c:a", "aac",
+                    "-b:a", "192k",
+                    "-avoid_negative_ts", "make_zero",
+                    output_file_path,
+                ]
 
             logger.info(f"Rendering edited clip: {' '.join(cmd)}")
             res = subprocess.run(cmd, capture_output=True, text=True)
@@ -264,6 +297,7 @@ class VideoEditorEngine:
             title = spec.get("title") or f"Manual Clip {idx + 1}"
             aspect_ratio = spec.get("aspect_ratio", "9:16")
             center_x = float(spec.get("center_x", 0.5))
+            layout_mode = spec.get("layout_mode", "crop")
             text_overlay = spec.get("text_overlay")
 
             clip_id = f"c_manual_{uuid.uuid4().hex[:6]}"
@@ -276,6 +310,7 @@ class VideoEditorEngine:
                 end_seconds=end_s,
                 aspect_ratio=aspect_ratio,
                 center_x=center_x,
+                layout_mode=layout_mode,
                 text_overlay=text_overlay,
                 output_file_path=target_path,
             )

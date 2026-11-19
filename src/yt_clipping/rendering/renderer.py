@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 
 from ..contracts.models import HighlightCandidate, RenderProfile, RenderedClip, Transcript
 from ..contracts.interfaces import Renderer
+from ..utils.file_ops import atomic_replace, safe_remove
+from .encoder_config import get_encoder_args
 from .captions import SubtitleGenerator
 from .face_tracker import FaceFocusedFramer
 from .cta_overlay import CTAOverlayEngine, CTAConfig
@@ -75,12 +77,20 @@ class FFmpegRenderer(Renderer):
         else:
             self.allow_synthetic = allow_synthetic
 
+    @staticmethod
+    def _escape_drawtext(text: str) -> str:
+        """Escapes text safely for FFmpeg drawtext filter."""
+        safe = str(text or "").replace("\\", "\\\\")
+        safe = safe.replace(":", "\\:").replace("'", "\\'").replace("%", "\\%")
+        return safe[:110]
+
     def build_filtergraph(
         self,
         profile: RenderProfile,
         subtitle_ass_path: Optional[str] = None,
         crop_override: Optional[str] = None,
         duration_seconds: Optional[float] = None,
+        attribution_text: Optional[str] = None,
     ) -> str:
         """
         Builds FFmpeg video filtergraph for vertical 9:16 cropping.
@@ -114,6 +124,15 @@ class FFmpegRenderer(Renderer):
             if fade_parts:
                 fade_vf = "," + ",".join(fade_parts)
 
+        badge_vf = ""
+        resolved_attr = attribution_text or getattr(profile, "attribution_overlay_text", None)
+        if resolved_attr and getattr(profile, "enable_attribution_overlay", True):
+            safe_attr = self._escape_drawtext(resolved_attr)
+            badge_vf = (
+                f",drawtext=text='{safe_attr}':x=28:y=h-th-36:fontsize=24:"
+                f"fontcolor=white@0.85:box=1:boxcolor=black@0.45:boxborderw=8"
+            )
+
         if profile.layout_mode == "blur_background":
             # BUG-21 fix: split [0:v] into two distinct streams so [0:v] is never reused
             # BUG-22 fix: use scale={w}:-2 to guarantee even height on foreground
@@ -122,7 +141,7 @@ class FFmpegRenderer(Renderer):
                 f"[in_bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=25:5[bg];"
                 f"[in_fg]scale={w}:-2[fg];"
                 f"[bg][fg]overlay=0:(H-h)/2[comp];"
-                f"[comp]setsar=1{escaped_sub}{fade_vf}[v]"
+                f"[comp]setsar=1{escaped_sub}{badge_vf}{fade_vf}[v]"
             )
 
         if profile.layout_mode == "split_screen":
@@ -134,16 +153,16 @@ class FFmpegRenderer(Renderer):
                 f"[in_top]crop=ih*9/8:ih:0:0,scale={w}:{half_h}[top];"
                 f"[in_bot]crop=ih*9/8:ih:iw-ow:0,scale={w}:{half_h}[bot];"
                 f"[top][bot]vstack=inputs=2[stacked];"
-                f"[stacked]setsar=1{escaped_sub}{fade_vf}[v]"
+                f"[stacked]setsar=1{escaped_sub}{badge_vf}{fade_vf}[v]"
             )
 
         if profile.layout_mode == "active_speaker":
             # FEATURE-02 dynamic crop framing
             crop_filter = crop_override or f"crop=ih*9/16:ih:(iw-ow)/2:0"
-            return f"[0:v]{crop_filter},scale={w}:{h},setsar=1{escaped_sub}{fade_vf}[v]"
+            return f"[0:v]{crop_filter},scale={w}:{h},setsar=1{escaped_sub}{badge_vf}{fade_vf}[v]"
 
         # Default Center 9:16 crop
-        vf = f"crop=ih*9/16:ih:(iw-ow)/2:0,scale={w}:{h},setsar=1{escaped_sub}{fade_vf}"
+        vf = f"crop=ih*9/16:ih:(iw-ow)/2:0,scale={w}:{h},setsar=1{escaped_sub}{badge_vf}{fade_vf}"
         return vf
 
     def build_ffmpeg_command(
@@ -155,6 +174,7 @@ class FFmpegRenderer(Renderer):
         output_path: str,
         subtitle_ass_path: Optional[str] = None,
         crop_override: Optional[str] = None,
+        attribution_text: Optional[str] = None,
     ) -> List[str]:
         """Assembles standard FFmpeg command line arguments with H.264 yuv420p profile and anti-pop audio fades."""
         vf = self.build_filtergraph(
@@ -162,6 +182,7 @@ class FFmpegRenderer(Renderer):
             subtitle_ass_path=subtitle_ass_path,
             crop_override=crop_override,
             duration_seconds=duration_seconds,
+            attribution_text=attribution_text,
         )
         is_complex = profile.layout_mode in ("split_screen", "blur_background", "active_speaker") or ";" in vf or "[v]" in vf
         if is_complex:
@@ -169,15 +190,11 @@ class FFmpegRenderer(Renderer):
         else:
             filter_args = ["-vf", vf]
 
-        # Encoder selection
-        codec_args = (
-            ["-c:v", profile.vcodec, "-preset", "p4", "-cq", str(profile.crf)]
-            if "nvenc" in profile.vcodec.lower()
-            else ["-c:v", profile.vcodec, "-preset", "fast", "-crf", str(profile.crf)]
-        )
+        # Encoder selection via centralized encoder_config
+        codec_args = get_encoder_args(profile.vcodec, profile.crf)
 
-        # Audio filters: A/V sync lock and anti-pop fade-in / outro fade-out
-        af_filters = ["aresample=async=1:first_pts=0"]
+        # Audio filters: A/V sync lock, anti-pop fade-in / outro fade-out, and exact duration trim
+        af_filters = ["aresample=async=1"]
         if getattr(profile, "enable_pacing_polish", False) and duration_seconds > 0.05:
             a_in = min(getattr(profile, "audio_fade_in_seconds", 0.02), duration_seconds / 2.0)
             a_out = min(getattr(profile, "audio_fade_out_seconds", 0.25), duration_seconds / 2.0)
@@ -185,10 +202,13 @@ class FFmpegRenderer(Renderer):
                 af_filters.append(f"afade=t=in:ss=0:d={a_in:.3f}:curve=hsin")
             if a_out > 0.0:
                 af_filters.append(f"afade=t=out:st={duration_seconds - a_out:.3f}:d={a_out:.3f}:curve=hsin")
+        if duration_seconds > 0.0:
+            af_filters.append(f"atrim=0:{duration_seconds:.3f}")
+        af_filters.append("asetpts=PTS-STARTPTS")
         af_spec = ",".join(af_filters)
 
         # BUG-20 fix: explicitly specify -pix_fmt yuv420p for standard MP4 playback compatibility
-        # Audio sync fix: aresample=async=1 and avoid_negative_ts make_zero locks A/V alignment to PTS 0
+        # Audio sync fix: aresample=async=1 + asetpts=PTS-STARTPTS locks A/V alignment to PTS 0 without shifting start_time
         cmd = [
             "ffmpeg",
             "-y",
@@ -201,7 +221,6 @@ class FFmpegRenderer(Renderer):
             "-c:a", profile.acodec,
             "-b:a", "192k",
             "-af", af_spec,
-            "-avoid_negative_ts", "make_zero",
             "-movflags", "+faststart",
             output_path,
         ]
@@ -214,12 +233,26 @@ class FFmpegRenderer(Renderer):
         profile: RenderProfile,
         output_dir: str,
         transcript: Optional[Transcript] = None,
+        attribution_text: Optional[str] = None,
     ) -> RenderedClip:
         """
         Renders the clip to a temporary path and atomically promotes to final location upon success.
         Raises RenderingError if FFmpeg fails, preventing synthetic fake video in production.
         """
         os.makedirs(output_dir, exist_ok=True)
+        try:
+            import shutil
+
+            min_free = int(os.environ.get("YT_MIN_FREE_DISK_BYTES", str(100 * 1024 * 1024)))
+            free_bytes = shutil.disk_usage(output_dir).free
+            if min_free > 0 and free_bytes < min_free:
+                raise RenderingError(
+                    f"Insufficient disk space in '{output_dir}': {free_bytes} bytes free (< {min_free} bytes required)."
+                )
+        except RenderingError:
+            raise
+        except Exception:
+            pass
         suffix = profile.name if profile.layout_mode in profile.name else f"{profile.name}_{profile.layout_mode}"
         clip_name = f"{candidate.video_id}_{candidate.start_seconds:06.1f}_{candidate.end_seconds:06.1f}_{suffix}.mp4"
         final_path = os.path.abspath(os.path.join(output_dir, clip_name))
@@ -296,6 +329,7 @@ class FFmpegRenderer(Renderer):
             output_path=temp_path,
             subtitle_ass_path=sub_path,
             crop_override=crop_override,
+            attribution_text=attribution_text,
         )
 
         # Attempt to run FFmpeg CLI
@@ -323,6 +357,7 @@ class FFmpegRenderer(Renderer):
                 output_path=temp_path,
                 subtitle_ass_path=sub_path,
                 crop_override=crop_override,
+                attribution_text=attribution_text,
             )
             try:
                 res_cpu = subprocess.run(cpu_cmd, capture_output=True, text=True, timeout=180)
@@ -336,11 +371,7 @@ class FFmpegRenderer(Renderer):
         # BUG-23 fix: Do NOT generate dummy MP4 in production!
         if not rendered_via_cli:
             if not self.allow_synthetic:
-                if os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except OSError:
-                        pass
+                safe_remove(temp_path)
                 raise RenderingError(
                     f"FFmpeg render failed for clip '{candidate.candidate_id}'. Error: {last_error}"
                 )
@@ -349,9 +380,7 @@ class FFmpegRenderer(Renderer):
                 self._generate_synthetic_test_clip(temp_path, candidate.duration_seconds, profile)
 
         # Atomic promotion: replace temp with final path
-        if os.path.exists(final_path):
-            os.remove(final_path)
-        os.replace(temp_path, final_path)
+        atomic_replace(temp_path, final_path)
 
         final_duration = candidate.duration_seconds
         # Render and append dedicated animated outro card if requested
@@ -363,6 +392,7 @@ class FFmpegRenderer(Renderer):
                     ["ffmpeg", "-y", "-sseof", "-0.1", "-i", final_path, "-vframes", "1", last_frame_path],
                     capture_output=True,
                     check=False,
+                    timeout=20,
                 )
 
                 # 2. Build outro card configuration
@@ -401,18 +431,13 @@ class FFmpegRenderer(Renderer):
 
                 # 5. Promote combined clip to final_path
                 if os.path.exists(combined_path):
-                    if os.path.exists(final_path):
-                        os.remove(final_path)
-                    os.rename(combined_path, final_path)
+                    atomic_replace(combined_path, final_path)
                     final_duration += outro_dur
 
                 # Intermediate temp cleanup
-                for tmp_file in [last_frame_path, outro_path]:
-                    if tmp_file and os.path.exists(tmp_file):
-                        try:
-                            os.remove(tmp_file)
-                        except OSError:
-                            pass
+                for tmp_file in [last_frame_path, outro_path, combined_path]:
+                    if tmp_file:
+                        safe_remove(tmp_file)
             except Exception as outro_err:
                 # Graceful degradation: keep original main clip if outro fails
                 logger.warning(f"Failed to append outro card: {outro_err}", exc_info=True)

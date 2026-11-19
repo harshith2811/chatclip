@@ -1,0 +1,156 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Architectural Light Palette (WCAG 2.2 AAA Calibrated) */
+    --background: 210 40% 98%;              /* #f8fafc - Cool Architectural Canvas */
+    --foreground: 228 25% 4.7%;             /* #090a0f - Deep Obsidian Text (18.9:1) */
+    
+    --card: 0 0% 100%;                      /* #ffffff - Pure White Working Surfaces */
+    --card-foreground: 228 25% 4.7%;        /* #090a0f (18.9:1) */
+    
+    --panel: 0 0% 100%;                     /* #ffffff - Dock & Header Surface */
+    --panel-foreground: 228 25% 4.7%;
+    
+    --popover: 0 0% 100%;                   /* #ffffff - Elevated Popover */
+    --popover-foreground: 228 25% 4.7%;
+    
+    --primary: 221.2 83.2% 53.3%;           /* #2563eb - Electric Sapphire Action (5.17:1 on white text) */
+    --primary-foreground: 0 0% 100%;        /* #ffffff */
+    --primary-hover: 224.4 76.3% 48%;       /* #1d4ed8 - Deep Sapphire Hover */
+    
+    --secondary: 210 40% 96.1%;             /* #f1f5f9 - Slate 100 Control Surface */
+    --secondary-foreground: 228 25% 4.7%;   /* #090a0f */
+    
+    --muted: 210 40% 96.1%;                 /* #f1f5f9 */
+    --muted-foreground: 215.3 19.3% 34.5%;  /* #475569 - Slate 600 (7.24:1 AAA) */
+    
+    --accent: 210 40% 95%;                  /* #f1f5f9 */
+    --accent-foreground: 228 25% 4.7%;
+    
+    --destructive: 0 84.2% 60.2%;           /* #ef4444 */
+    --destructive-foreground: 0 0% 100%;
+    
+    --border: 214.3 31.8% 91.4%;            /* #e2e8f0 - Crisp Slate 200 */
+    --border-subtle: 220 14.3% 95.9%;       /* #f1f5f9 - Muted Divider */
+    --input: 214.3 31.8% 91.4%;
+    
+    --ring: 221.2 83.2% 53.3%;              /* #2563eb - High-contrast focus ring */
+    
+    --success: 162.9 93.5% 24.3%;           /* #047857 - Emerald 700 (5.48:1 on white) */
+    --success-foreground: 0 0% 100%;
+    --yield: 162.9 93.5% 24.3%;
+    --yield-foreground: 0 0% 100%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Luxury Obsidian Dark Studio Palette (WCAG 2.2 AAA Calibrated) */
+    --background: 228 25% 4.7%;             /* #090a0f - Deep Obsidian Application Canvas */
+    --foreground: 210 40% 98%;              /* #f8fafc - Crisp White Text (18.9:1 AAA) */
+    
+    --card: 224 28% 10.5%;                  /* #131722 - Layered Studio Slate Surface */
+    --card-foreground: 210 40% 98%;         /* #f8fafc (16.6:1 AAA) */
+    
+    --panel: 225 30% 7.8%;                  /* #0e111a - Dock & Header Surface */
+    --panel-foreground: 210 40% 98%;        /* #f8fafc (17.6:1 AAA) */
+    
+    --popover: 224 27% 13%;                 /* #181d2a - Elevated Studio Surface */
+    --popover-foreground: 210 40% 98%;      /* #f8fafc */
+    
+    --primary: 217.2 91.2% 59.8%;           /* #3b82f6 - Luminous Sapphire Action (5.38:1 vs Obsidian) */
+    --primary-foreground: 228 25% 4.7%;     /* #090a0f */
+    --primary-hover: 213.1 93.9% 67.8%;     /* #60a5fa - Vibrant Sapphire Hover */
+    
+    --secondary: 224 25% 15%;               /* #1d2332 - Secondary Tab / Control */
+    --secondary-foreground: 210 40% 98%;    /* #f8fafc */
+    
+    --muted: 224 25% 12%;                   /* #151a26 - Subtle Panel Background */
+    --muted-foreground: 215 20.2% 65.1%;    /* #94a3b8 - Slate 400 (7.18:1 AAA vs Panel) */
+    
+    --accent: 224 25% 15%;                  /* #1d2332 */
+    --accent-foreground: 210 40% 98%;
+    
+    --destructive: 0 84.2% 60.2%;           /* #ef4444 */
+    --destructive-foreground: 210 40% 98%;
+    
+    --border: 223 24% 17.6%;                /* #222838 - Surgical Slate Border */
+    --border-subtle: 224 25% 13.5%;         /* #191e2b - Interior Divider */
+    --input: 223 24% 17.6%;                 /* #222838 */
+    
+    --ring: 217.2 91.2% 59.8%;              /* #3b82f6 - High-contrast focus ring */
+    
+    --success: 160.1 84.1% 39.4%;           /* #10b981 - Emerald 500 */
+    --success-foreground: 210 40% 98%;
+    --yield: 158.1 64.4% 51.6%;             /* #34d399 - Emerald 400 (9.05:1 AAA on Card) */
+    --yield-foreground: 164.2 85.7% 16.5%;   /* #064e3b */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  html {
+    scroll-behavior: smooth;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background text-foreground selection:bg-primary/20 selection:text-primary min-h-screen;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Universal Tabular Numerals for metrics, timecodes, percentages */
+  .tnum, [data-tnum="true"] {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom Creative Studio Utilities */
+@layer utilities {
+  .subtle-border {
+    box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  }
+  
+  .tactile-panel {
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  }
+  
+  .dark .tactile-panel {
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35);
+  }
+
+  .glow-primary {
+    box-shadow: 0 0 20px -3px hsla(217, 91%, 60%, 0.25);
+  }
+  
+  .glow-emerald {
+    box-shadow: 0 0 20px -3px rgba(16, 185, 129, 0.25);
+  }
+
+  /* Hide scrollbar for clean horizontal preview rails while retaining scroll */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Reduced Motion Safeguard */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

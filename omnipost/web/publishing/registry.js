@@ -8,7 +8,7 @@
  * read from here.
  */
 
-import { facebookAdapter, instagramAdapter, threadsAdapter } from './meta.js';
+import { facebookAdapter, instagramAdapter, threadsAdapter, MetaApiError } from './meta.js';
 import { linkedinAdapter } from './linkedin.js';
 import { pinterestAdapter } from './pinterest.js';
 
@@ -30,36 +30,53 @@ export function youtubeAdapter({ post = {}, env = process.env, n8nClient = null 
   return {
     platform: 'youtube',
     async createContainer() {
-      if (n8nClient) {
-        try {
-          const res = await n8nClient('/webhook/youtube-publish', {
-            method: 'POST',
-            body: {
-              contentId: post['Content ID'] || post.content_id,
-              title: post.Title || post.title || 'Untitled Video',
-              caption: post.Caption || post.caption || '',
-              mediaUrl: post['Public Media URL'] || post.public_media_url || post.mediaUrl || ''
-            }
-          });
-          const id = res?.videoId || res?.id || `yt_${Date.now()}`;
-          return { postId: id, releaseUrl: `https://www.youtube.com/watch?v=${id}` };
-        } catch (err) {
-          throw new MetaApiError(`YouTube publishing failed via n8n: ${err.message}`, {
-            status: 502,
+      if (!n8nClient) {
+        throw new MetaApiError(
+          'YouTube publishing bridge (n8nClient) is not configured. Refusing to fabricate upload success.',
+          {
+            status: 503,
             platform: 'youtube',
-            body: null
-          });
-        }
+            body: { error: { code: 'YOUTUBE_BRIDGE_UNCONFIGURED' } }
+          }
+        );
       }
-      const rawId = post['Content ID'] || post.content_id || Date.now();
-      const id = `yt_${String(rawId).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-      return {
-        postId: id,
-        releaseUrl: `https://www.youtube.com/watch?v=${id}`
-      };
+      let res;
+      try {
+        res = await n8nClient('/webhook/youtube-publish', {
+          method: 'POST',
+          body: {
+            contentId: post['Content ID'] || post.content_id,
+            title: post.Title || post.title || 'Untitled Video',
+            caption: post.Caption || post.caption || '',
+            mediaUrl: post['Public Media URL'] || post.public_media_url || post.mediaUrl || ''
+          }
+        });
+      } catch (err) {
+        throw new MetaApiError(`YouTube publishing failed via n8n: ${err.message}`, {
+          status: 502,
+          platform: 'youtube',
+          body: null
+        });
+      }
+      const id = res?.videoId || res?.id;
+      if (!id) {
+        throw new MetaApiError('YouTube publishing bridge returned no external videoId.', {
+          status: 502,
+          platform: 'youtube',
+          body: res || null
+        });
+      }
+      return { postId: id, releaseUrl: `https://www.youtube.com/watch?v=${id}` };
     },
     async checkContainer() { return 'PUBLISHED'; },
     async publishContainer(containerId) {
+      if (!containerId) {
+        throw new MetaApiError('YouTube containerId missing during publish confirmation.', {
+          status: 400,
+          platform: 'youtube',
+          body: null
+        });
+      }
       return { postId: containerId, releaseUrl: `https://www.youtube.com/watch?v=${containerId}` };
     },
     async describePublished(containerId) {

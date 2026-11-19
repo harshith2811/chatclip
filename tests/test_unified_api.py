@@ -9,8 +9,10 @@ import subprocess
 import uuid
 from fastapi.testclient import TestClient
 
-from yt_clipping.web.server import app, project_store, CLIPS_DIR
+from yt_clipping.web.server import app, project_store, CLIPS_DIR, DATA_DIR, DB_PATH
 from yt_clipping.orchestration.project_store import ClipSidecarRecord
+from yt_clipping.rights.gate import LocalRightsPolicy
+from yt_clipping.contracts.models import RightsBasis, RightsStatus
 
 
 @pytest.fixture(scope="module")
@@ -25,7 +27,7 @@ def sample_mp4():
         "ffmpeg",
         "-y",
         "-f", "lavfi",
-        "-i", "testsrc=duration=2:size=640x360:rate=25",
+        "-i", "testsrc=duration=2:size=360x640:rate=25",
         "-f", "lavfi",
         "-i", "sine=frequency=1000:duration=2",
         "-c:v", "libx264",
@@ -82,6 +84,15 @@ def test_api_publish_rejection_without_approval(client, sample_mp4):
 
 def test_api_publish_success_with_approval(client, sample_mp4):
     cid = f"test_api_clip_{uuid.uuid4().hex[:8]}"
+    policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    policy.register_rights(
+        video_id="vid_api_test",
+        basis=RightsBasis.OWNED,
+        owner="TestOwner",
+        status=RightsStatus.VERIFIED,
+        proof_reference="test-fixture-owned",
+        allow_regrant_revoked=True,
+    )
     # Seed sidecar in project store
     sidecar = ClipSidecarRecord(
         clip_id=cid,
@@ -204,6 +215,15 @@ def test_api_editor_preview_frame_resolves_clip_id(client, sample_mp4):
 def test_api_batch_multi_clip_publishing(client, sample_mp4):
     cid1 = f"batch_clip_01_{uuid.uuid4().hex[:6]}"
     cid2 = f"batch_clip_02_{uuid.uuid4().hex[:6]}"
+    policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    policy.register_rights(
+        video_id="vid_batch_test",
+        basis=RightsBasis.OWNED,
+        owner="TestOwner",
+        status=RightsStatus.VERIFIED,
+        proof_reference="test-fixture-batch-owned",
+        allow_regrant_revoked=True,
+    )
 
     for cid in (cid1, cid2):
         sidecar = ClipSidecarRecord(

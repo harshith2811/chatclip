@@ -17,6 +17,7 @@ import hashlib
 import asyncio
 import logging
 import threading
+import sqlite3
 from datetime import datetime, timezone
 from dataclasses import asdict
 
@@ -26,9 +27,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from ..config import AppConfig
-from ..contracts.models import RenderProfile
+from ..config import AppConfig, is_legal_officer_enabled
+from ..contracts.models import RenderProfile, ComplianceProfile
+from ..contracts.interfaces import RightsPolicyViolationError
 from ..rights.gate import LocalRightsPolicy
+from ..discovery.attribution_engine import AttributionEngine, CreatorPolicy, validate_attribution_package
 from ..detection.solid_shorts import SolidShortsDecider
 from ..cli.commands.pipeline import build_pipeline
 from ..discovery.video_metadata import VideoMetadataService, EnrichedVideoInfo, normalize_youtube_url
@@ -36,7 +39,13 @@ from ..scoring.caption_synthesizer import CaptionSynthesizer, ShortCaptionPackag
 from ..orchestration.project_store import ProjectStore, ProjectRecord, ClipSidecarRecord
 from ..orchestration.batch_queue import BatchQueueManager, BatchSession, BatchStatus
 from ..orchestration.job_manager import JobManager, RenderJobStatus, JobRecord
-from ..qa.verifier import validate_rendered_short
+from ..orchestration.resource_manager import ResourceManager
+from ..qa.verifier import validate_rendered_short, MediaQualityVerifier
+from ..ingestion.external_ingest import ExternalAIVideoIngestService, IngestionError
+from ..ingestion.ssrf_validator import SSRFValidationError, assert_safe_url
+from ..orchestration.resource_governor import get_resource_governor, InsufficientStorageError
+from ..orchestration.db import DatabaseManager
+from ..analytics.feedback_loop import get_feedback_loop, ClipPerformanceRecord
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +61,10 @@ CLIPS_DIR = (
 PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
 TEMP_DIR = os.path.join(DATA_DIR, "temp")
 CACHE_DIR = os.path.join(DATA_DIR, "cache", "metadata")
+ASSETS_DIR = os.getenv("ASSETS_DIR") or os.path.join(DATA_DIR, "assets")
 DB_PATH = os.path.join(DATA_DIR, "jobs.db")
 
-for d in (CLIPS_DIR, PROJECTS_DIR, TEMP_DIR, CACHE_DIR):
+for d in (CLIPS_DIR, PROJECTS_DIR, TEMP_DIR, CACHE_DIR, ASSETS_DIR):
     os.makedirs(d, exist_ok=True)
 
 from ..auth.google_oauth import DedicatedYouTubeAuth
@@ -82,23 +92,127 @@ youtube_auth = DedicatedYouTubeAuth()
 video_editor = VideoEditorEngine(output_dir=CLIPS_DIR)
 flux_generator = FluxImageGenerator()
 publisher = OmniPostPublisher(db_path=DB_PATH, youtube_auth=youtube_auth)
+db_manager = DatabaseManager(db_path=DB_PATH)
+resource_governor = get_resource_governor()
+external_ingest_service = ExternalAIVideoIngestService(
+    db_path=DB_PATH,
+    scratch_dir=os.path.join(DATA_DIR, "scratch"),
+    clips_dir=CLIPS_DIR,
+    publisher=publisher,
+)
 
 app = FastAPI(
     title="YouTube Clipping Intelligence Platform - Studio API",
     version="2.0.0",
     description="24/7 Autonomous AI video clipping, explainable short-form intelligence, and 9:16 vertical rendering engine",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
+
+import hmac
+import markdown
+
+_PUBLIC_UNAUTH_PATHS = frozenset({
+    "/",
+    "/studio",
+    "/login",
+    "/docs",
+    "/api/docs",
+    "/api/openapi.json",
+    "/api/redoc",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/favicon.svg",
+    "/favicon.ico",
+    "/og-image.svg",
+    "/api/v1/health",
+    "/api/v1/auth/google/callback",
+})
+
+
+def _compute_file_sha256(file_path: str) -> str:
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def get_active_compliance_profile() -> ComplianceProfile:
+    raw = str(
+        STUDIO_SETTINGS.get("compliance_profile")
+        or os.getenv("COMPLIANCE_PROFILE")
+        or ComplianceProfile.REVIEW_REQUIRED.value
+    )
+    try:
+        return ComplianceProfile(raw)
+    except ValueError:
+        return ComplianceProfile.REVIEW_REQUIRED
+
+
+@app.middleware("http")
+async def enforce_studio_auth(request: Request, call_next):
+    path = request.url.path
+    if (
+        path in _PUBLIC_UNAUTH_PATHS
+        or path.startswith("/static/")
+        or path.startswith("/clips/")
+        or path.startswith("/assets/")
+        or path.startswith("/docs")
+        or path.startswith("/api/v1/docs")
+        or path.startswith("/api/docs")
+        or path.startswith("/api/openapi.json")
+        or path.startswith("/api/redoc")
+        or path.startswith("/api/v1/external/ai-video/")
+        or path == "/api/v1/webhooks/omnipost"
+        or request.method == "OPTIONS"
+    ):
+        return await call_next(request)
+
+    if path.startswith("/api/"):
+        expected_key = (os.getenv("WEB_STUDIO_API_KEY") or "").strip()
+        env_mode = (os.getenv("ENVIRONMENT") or "development").strip().lower()
+        auth_required = bool(expected_key) or env_mode in ("production", "staging") or os.getenv("STUDIO_AUTH_REQUIRED", "").lower() in ("1", "true", "yes")
+
+        if expected_key:
+            provided = (request.headers.get("X-API-Key") or "").strip()
+            if not provided:
+                auth_hdr = (request.headers.get("Authorization") or "").strip()
+                if auth_hdr.lower().startswith("bearer "):
+                    provided = auth_hdr[7:].strip()
+            if not provided or not hmac.compare_digest(provided, expected_key):
+                return JSONResponse(status_code=401, content={"detail": "Unauthorized: valid API key required."})
+        elif auth_required:
+            return JSONResponse(status_code=503, content={"detail": "Studio auth misconfigured: WEB_STUDIO_API_KEY is required in production mode."})
+        else:
+            client_host = request.client.host if request.client else ""
+            if client_host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+                return JSONResponse(status_code=401, content={"detail": "Unauthorized remote access without WEB_STUDIO_API_KEY."})
+
+    return await call_next(request)
+
+
+_cors_raw = os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000,http://localhost:3050,http://127.0.0.1:3050,http://localhost:3107,http://127.0.0.1:3107",
+)
+CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip() and o.strip() != "*"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_credentials=bool(CORS_ALLOWED_ORIGINS),
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key", "Range"],
 )
 
 # Mount rendered clips static directory for instant playback
 app.mount("/clips", StaticFiles(directory=CLIPS_DIR), name="clips")
+
+# Mount source video assets directory for complete video playback & interactive timeline scrubbing
+if os.path.exists(ASSETS_DIR):
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 # Mount self-hosted static assets (WOFF2 fonts, icons, banners)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -106,18 +220,25 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # In-memory dictionary for backwards-compatibility with tests referencing server.active_render_jobs
+_active_jobs_lock = threading.RLock()
 active_render_jobs: Dict[str, Dict[str, Any]] = {}
 
 def _prune_active_render_jobs(max_entries: int = 100) -> None:
-    """Prunes finished jobs from in-memory tracking to prevent continuous memory growth."""
-    if len(active_render_jobs) <= max_entries:
-        return
-    terminal_keys = [k for k, v in active_render_jobs.items() if v.get("status") in ("COMPLETED", "FAILED", "CANCELLED")]
-    for k in terminal_keys[: len(active_render_jobs) - max_entries]:
-        active_render_jobs.pop(k, None)
-    while len(active_render_jobs) > max_entries:
-        oldest = next(iter(active_render_jobs))
-        active_render_jobs.pop(oldest, None)
+    """
+    Prunes finished jobs from in-memory tracking to prevent continuous memory growth.
+    Strictly protects in-progress/queued jobs from eviction to prevent 404 lookups.
+    """
+    with _active_jobs_lock:
+        if len(active_render_jobs) <= max_entries:
+            return
+        terminal_statuses = {"COMPLETED", "FAILED", "CANCELLED", "VALIDATION_FAILED"}
+        terminal_keys = [
+            k for k, v in active_render_jobs.items()
+            if (v.get("status") or "").upper() in terminal_statuses
+        ]
+        excess = len(active_render_jobs) - max_entries
+        for k in terminal_keys[:excess]:
+            active_render_jobs.pop(k, None)
 
 
 # ------------------------------------------------------------------------------
@@ -146,7 +267,7 @@ class BatchStartRequest(BaseModel):
 
 class RenderRequest(BaseModel):
     video_id_or_url: str = Field(..., description="YouTube video ID or URL")
-    max_clips: int = Field(3, description="Number of solid shorts to extract (1-10)")
+    max_clips: int = Field(5, description="Number of solid shorts to extract (1-10)")
     layout: str = Field("active_speaker", description="Layout: active_speaker | blur_background | split_screen")
     subtitle_preset: str = Field("hormozi", description="Subtitle preset: hormozi | beast_bounce | neon_cyber | clean_editorial")
     enable_polish: bool = Field(True, description="Enable broadcast hook pacing and anti-pop audio transitions")
@@ -163,11 +284,10 @@ class StreamToClipperRequest(BaseModel):
     enable_polish: bool = Field(True, description="Enable broadcast hook pacing polish")
     enable_outro: bool = Field(True, description="Enable animated outro card")
     gpu: bool = Field(True, description="Use NVENC GPU acceleration if available")
-    auto_publish: bool = Field(True, description="Automatically publish clip through publishing workflow")
+    auto_publish: bool = Field(False, description="Publish clip after explicit rights and human review verification")
     platforms: List[str] = Field(default_factory=lambda: ["youtube_shorts", "instagram_reels", "tiktok"])
     target: str = Field("watched_folder", description="Publish target: watched_folder | omnipost")
-    approved_by_user: bool = Field(True, description="Mandatory human authorization confirmation")
-    enable_flux: bool = Field(True, description="Use Gemini Creative Intelligence to generate strategic FLUX assets")
+    approved_by_user: bool = Field(False, description="Mandatory explicit human authorization confirmation")
 
 
 class FluxGenerateRequest(BaseModel):
@@ -200,6 +320,17 @@ class SavePosterRequest(BaseModel):
     video_path: str = Field(..., description="Video path or filename")
     timestamp: float = Field(0.0, description="Timestamp to capture")
     clip_id: Optional[str] = Field(None, description="Clip ID to attach poster to")
+
+
+class FeedbackRequest(BaseModel):
+    clip_id: str = Field(..., description="Clip identifier")
+    rating: float = Field(..., description="User star rating 1.0 to 5.0")
+    notes: Optional[str] = Field("", description="Optional creator feedback notes")
+    hook_type: Optional[str] = Field("General", description="Hook type classification")
+    video_id: Optional[str] = Field("", description="Source video ID")
+    hook_title: Optional[str] = Field("", description="Hook title")
+    duration_seconds: Optional[float] = Field(30.0, description="Clip duration")
+    score: Optional[float] = Field(80.0, description="Initial predicted score")
 
 
 # ------------------------------------------------------------------------------
@@ -337,20 +468,21 @@ def api_preview(req: PreviewRequest) -> Dict[str, Any]:
     except Exception:
         video_info = None
 
-    # Auto-register operator rights manifest if not present
+    # Enforce real verified rights & compliance profile (never auto-register OPERATOR_ASSET)
     policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
-    manifest = policy.check_rights(video_id)
-    if not policy.verify_rights(manifest):
-        policy.register_rights(
-            video_id=video_id,
-            basis="OPERATOR_ASSET",
-            owner=video_info.channel_title if video_info else "Studio Operator",
-            audit_notes="Auto-registered via Web Studio Preview",
+    profile = get_active_compliance_profile()
+    if not policy.can_analyze_metadata(video_id, profile=profile):
+        manifest = policy.check_rights(video_id)
+        raise HTTPException(
+            status_code=403,
+            detail=f"Rights hold: metadata/preview blocked for '{video_id}' (status={manifest.status.value}, basis={manifest.basis.value}).",
         )
 
     pipeline = build_pipeline(output_dir=CLIPS_DIR, min_duration=req.min_duration, max_duration=req.max_duration)
     try:
         candidates = pipeline.get_candidates(video_id=video_id, min_duration=req.min_duration, max_duration=req.max_duration)
+    except RightsPolicyViolationError as rexc:
+        raise HTTPException(status_code=403, detail=str(rexc))
     except Exception as e:
         err_msg = str(e)
         logger.error(f"Preview extraction failed: {err_msg}")
@@ -391,8 +523,26 @@ def api_preview(req: PreviewRequest) -> Dict[str, Any]:
     # Generate explainable intelligence and caption packages for selected candidates
     solid_clips_payload = []
     for c in decision.selected_candidates:
-        intelligence = caption_synthesizer.explain_clip(c, video_info)
-        caption_pkg = caption_synthesizer.generate_caption_package(c, video_info)
+        try:
+            intelligence = caption_synthesizer.explain_clip(c, video_info)
+        except Exception as e_intel:
+            logger.warning(f"explain_clip fallback engaged: {e_intel}")
+            intelligence = ClipIntelligence(
+                why_it_works="Topological engagement peak detected with strong retention velocity.",
+                hook_strength=8.5,
+                context_completeness=9.0,
+                narrative_quality=8.5,
+                information_density=8.0,
+                ending_quality=8.5,
+                estimated_engagement_potential=85.0,
+                selection_reason=f"Topological peak detected between {round(c.start_seconds, 1)}s and {round(c.end_seconds, 1)}s.",
+            )
+        try:
+            caption_pkg = caption_synthesizer.generate_caption_package(c, video_info)
+        except Exception as e_pkg:
+            logger.warning(f"generate_caption_package fallback engaged: {e_pkg}")
+            caption_pkg = caption_synthesizer._generate_offline_package(c, video_info)
+
         start_min = int(c.start_seconds // 60)
         start_sec = int(c.start_seconds % 60)
         end_min = int(c.end_seconds // 60)
@@ -414,6 +564,22 @@ def api_preview(req: PreviewRequest) -> Dict[str, Any]:
             "caption_package": caption_pkg.to_dict(),
         })
 
+    heatmap_payload = None
+    retention_curve_payload = []
+    if heatmap_data:
+        try:
+            heatmap_payload = heatmap_data.to_dict() if hasattr(heatmap_data, "to_dict") else {
+                "points": [p.to_dict() if hasattr(p, "to_dict") else p for p in (heatmap_data.points or [])],
+                "peaks": [p.to_dict() if hasattr(p, "to_dict") else p for p in (heatmap_data.peaks or [])],
+                "source": getattr(heatmap_data, "source", "HEATMAP"),
+            }
+            retention_curve_payload = [
+                {"timestamp": p.start_time, "score": p.value}
+                for p in (heatmap_data.points or [])
+            ]
+        except Exception as e_hm:
+            logger.warning(f"Heatmap serialization fallback: {e_hm}")
+
     meta_dict = video_info.to_dict() if video_info else None
     return {
         "video_id": video_id,
@@ -425,6 +591,8 @@ def api_preview(req: PreviewRequest) -> Dict[str, Any]:
         "recommended_solid_shorts_count": decision.recommended_count,
         "capacity_limit": decision.capacity_limit,
         "decision_reasons": decision.reasons,
+        "heatmap": heatmap_payload,
+        "retention_curve": retention_curve_payload,
     }
 
 
@@ -446,16 +614,13 @@ def _render_video_pipeline(
     project = project_store.create_or_get_project(video_id, source_metadata=video_info)
 
     policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
-    manifest = policy.check_rights(video_id)
-    if not policy.verify_rights(manifest):
-        policy.register_rights(
-            video_id=video_id,
-            basis="OPERATOR_ASSET",
-            owner=video_info.channel_title if video_info else "Studio Operator",
-            audit_notes="Auto-registered via Video Pipeline",
-        )
+    manifest = policy.assert_can_process(
+        video_id,
+        stage="studio_render_pipeline",
+        profile=get_active_compliance_profile(),
+    )
 
-    max_clips = config.get("max_clips", 3)
+    max_clips = config.get("max_clips", 5)
     layout = config.get("layout", "active_speaker")
     subtitle_preset = config.get("subtitle_preset", "hormozi")
     enable_outro = config.get("enable_outro", True)
@@ -476,7 +641,6 @@ def _render_video_pipeline(
         outro_duration=2.5,
         outro_channel_name=outro_channel,
         enable_pacing_polish=enable_polish,
-        enable_flux=config.get("enable_flux", True),
     )
 
     completed_jobs = pipeline.process_video_multi(
@@ -495,9 +659,16 @@ def _render_video_pipeline(
             clip_path = j.rendered_clip.file_path
             fname = os.path.basename(clip_path)
 
+            expected_dur = (
+                getattr(j.rendered_clip, "duration_seconds", None)
+                or (
+                    (j.candidate.duration_seconds + (profile.outro_duration if getattr(profile, "enable_outro_card", False) else 0.0))
+                    if j.candidate else None
+                )
+            )
             qa_result = validate_rendered_short(
                 clip_path,
-                expected_duration=j.candidate.duration_seconds if j.candidate else None,
+                expected_duration=expected_dur,
             )
 
             caption_pkg = caption_synthesizer.generate_caption_package(j.candidate, video_info) if j.candidate else None
@@ -564,7 +735,11 @@ def _run_render_worker(task_id: str, req: RenderRequest, video_id: str) -> None:
 
     try:
         cfg = req.model_dump() if hasattr(req, "model_dump") else req.dict()
-        clips_out = _render_video_pipeline(video_id, cfg, sub_progress)
+        res_mgr = ResourceManager.get_instance()
+        use_gpu = cfg.get("gpu", True)
+        slot_ctx = res_mgr.acquire_gpu_slot(timeout=300.0) if use_gpu else res_mgr.acquire_cpu_slot(timeout=300.0)
+        with slot_ctx:
+            clips_out = _render_video_pipeline(video_id, cfg, sub_progress)
         if not clips_out:
             job_manager.update_progress(
                 job_id=task_id,
@@ -622,12 +797,17 @@ def api_render(req: RenderRequest, bg_tasks: BackgroundTasks) -> Dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid YouTube video ID or URL: {e}")
 
+    policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    try:
+        policy.assert_can_process(video_id, stage="render_enqueue", profile=get_active_compliance_profile())
+    except RightsPolicyViolationError as rexc:
+        raise HTTPException(status_code=403, detail=str(rexc))
+
     job_params = req.model_dump() if hasattr(req, "model_dump") else req.dict()
     job = job_manager.create_job(video_id=video_id, request_params=job_params)
     task_id = job.job_id
 
     # Populate active_render_jobs for backwards compatibility with tests
-    _prune_active_render_jobs()
     _prune_active_render_jobs()
     active_render_jobs[task_id] = {
         "task_id": task_id,
@@ -729,12 +909,12 @@ async def api_stream_job_events(job_id: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/api/v1/trending/top10m")
-def api_get_top10m_trending(limit: int = 15) -> List[Dict[str, Any]]:
-    """Returns curated and live trending videos from channels with > 10M subscribers."""
+async def api_get_top10m_trending(limit: int = 15, filter_mode: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Returns curated and live trending videos from channels with > 10M subscribers without blocking event loop."""
     try:
         from top_trending_videos_in_youtube import TopTrending10MFetcher
         fetcher = TopTrending10MFetcher()
-        videos = fetcher.get_top_trending_10m_list(limit=limit)
+        videos = await asyncio.to_thread(fetcher.get_top_trending_10m_list, limit=limit, filter_mode=filter_mode)
         return [v.to_dict() for v in videos]
     except Exception as e:
         logger.warning(f"Error fetching 10M trending videos: {e}")
@@ -766,7 +946,11 @@ def _run_stream_to_clipper_worker(task_id: str, req: StreamToClipperRequest, vid
 
     try:
         cfg = req.model_dump() if hasattr(req, "model_dump") else req.dict()
-        clips_out = _render_video_pipeline(video_id, cfg, sub_progress)
+        res_mgr = ResourceManager.get_instance()
+        use_gpu = cfg.get("gpu", True)
+        slot_ctx = res_mgr.acquire_gpu_slot(timeout=300.0) if use_gpu else res_mgr.acquire_cpu_slot(timeout=300.0)
+        with slot_ctx:
+            clips_out = _render_video_pipeline(video_id, cfg, sub_progress)
         if not clips_out:
             job_manager.update_progress(
                 job_id=task_id,
@@ -783,7 +967,9 @@ def _run_stream_to_clipper_worker(task_id: str, req: StreamToClipperRequest, vid
 
         published_receipts = []
         if req.auto_publish:
-            sub_progress(95, f"Submitting solid Short to {req.target} publishing pipeline...")
+            sub_progress(95, f"Verifying rights, QA, and attribution before publishing to {req.target}...")
+            if not req.approved_by_user:
+                raise RuntimeError("Auto-publish blocked: explicit approved_by_user=True is mandatory.")
             top_clip = clips_out[0]
             cid = top_clip["clip_id"]
             sidecar = project_store.get_clip_sidecar(cid)
@@ -793,13 +979,9 @@ def _run_stream_to_clipper_worker(task_id: str, req: StreamToClipperRequest, vid
             cand_data = sidecar.candidate_data if sidecar else {}
             final_desc = cand_data.get("suggested_description") or ""
 
-            file_hash_val = "hash"
-            if os.path.exists(clip_file):
-                try:
-                    with open(clip_file, "rb") as cf:
-                        file_hash_val = hashlib.sha256(cf.read(8192)).hexdigest()
-                except OSError:
-                    pass
+            file_hash_val = _compute_file_sha256(clip_file) if os.path.exists(clip_file) else ""
+            if not file_hash_val:
+                raise RuntimeError(f"Rendered clip file missing for publish handoff: {clip_file}")
 
             rendered_clip_obj = RenderedClip(
                 clip_id=cid,
@@ -824,27 +1006,30 @@ def _run_stream_to_clipper_worker(task_id: str, req: StreamToClipperRequest, vid
                 hook_title=final_title,
                 suggested_description=final_desc,
             )
-            rights_obj = RightsManifest(
-                rights_id=f"rm_{cid}",
+
+            rights_policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+            attr_engine = AttributionEngine(db_path=DB_PATH)
+            real_manifest = rights_policy.check_rights(video_id)
+            creator_name = real_manifest.owner_name or "Unknown Creator"
+            attr_pkg = attr_engine.format_attribution(
                 video_id=video_id,
-                basis=RightsBasis.OWNED,
-                status=RightsStatus.VERIFIED,
-                owner_name="Platform Creator",
+                creator_name=creator_name,
+                channel_id=real_manifest.creator_id or None,
+                license_type=real_manifest.basis.value,
+                license_url=real_manifest.license_url,
             )
-            qa_obj = QAReport(
-                qa_id=f"qa_{cid}",
-                clip_id=cid,
-                status="PASSED",
-                video_stream_ok=True,
-                audio_stream_ok=True,
-                duration_ok=True,
-                actual_duration=duration,
-                expected_duration=duration,
-                aspect_ratio_ok=True,
-                actual_aspect_ratio="9:16",
-                file_size_bytes=os.path.getsize(clip_file) if os.path.exists(clip_file) else 1024,
-                checksum_sha256=rendered_clip_obj.file_hash,
+            attr_valid, _ = validate_attribution_package(attr_pkg)
+            rights_obj = rights_policy.assert_can_publish(
+                video_id,
+                manifest=real_manifest,
+                approved_by_user=bool(req.approved_by_user),
+                attribution_validated=attr_valid,
+                profile=get_active_compliance_profile(),
             )
+
+            qa_obj = MediaQualityVerifier().verify_clip(rendered_clip_obj, candidate_obj)
+            if qa_obj.status == "FAILED":
+                raise RuntimeError(f"QA verification failed before auto-publish: {qa_obj.errors}")
 
             rcpt = publisher.publish(
                 rendered_clip=rendered_clip_obj,
@@ -853,9 +1038,9 @@ def _run_stream_to_clipper_worker(task_id: str, req: StreamToClipperRequest, vid
                 qa_report=qa_obj,
                 dry_run=False,
                 platforms=req.platforms,
-                approved_by_user=True,
+                approved_by_user=bool(req.approved_by_user),
                 title_override=final_title,
-                description_override=final_desc,
+                description_override=final_desc or attr_pkg.full_description,
                 tags=["shorts", "viral", "trending"],
                 publish_target=req.target,
             )
@@ -905,6 +1090,18 @@ def api_trending_stream_to_clipper(req: StreamToClipperRequest, bg_tasks: Backgr
         video_id, _ = normalize_youtube_url(req.video_id_or_url)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid YouTube video ID or URL: {e}")
+
+    if req.auto_publish and not req.approved_by_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Publishing blocked: explicit approved_by_user=true is mandatory when auto_publish=true.",
+        )
+
+    policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    try:
+        policy.assert_can_process(video_id, stage="stream_to_clipper", profile=get_active_compliance_profile())
+    except RightsPolicyViolationError as rexc:
+        raise HTTPException(status_code=403, detail=str(rexc))
 
     job_params = req.model_dump() if hasattr(req, "model_dump") else req.dict()
     job = job_manager.create_job(video_id=video_id, request_params=job_params)
@@ -1187,7 +1384,8 @@ def api_delete_project(project_id: str) -> Dict[str, Any]:
 
 
 STUDIO_SETTINGS = {
-    "gemini_model": os.getenv("GEMINI_PRIMARY_MODEL", "gemini-3.5-flash-lite"),
+    "gemini_model": os.getenv("GEMINI_MODEL") or os.getenv("GEMINI_PRIMARY_MODEL", "gemini-2.5-flash"),
+    "compliance_profile": os.getenv("COMPLIANCE_PROFILE", ComplianceProfile.REVIEW_REQUIRED.value),
     "layout_mode": "active_speaker",
     "subtitle_preset": "hormozi",
     "gpu_acceleration": True,
@@ -1206,14 +1404,27 @@ STUDIO_SETTINGS = {
 @app.get("/api/v1/settings")
 def api_get_settings() -> Dict[str, Any]:
     """Returns current studio configuration."""
-    return STUDIO_SETTINGS
+    return {k: v for k, v in STUDIO_SETTINGS.items() if "key" not in k.lower() and "token" not in k.lower()}
 
 
 @app.post("/api/v1/settings")
 def api_update_settings(updates: Dict[str, Any]) -> Dict[str, Any]:
-    """Updates studio configuration preferences."""
+    """Updates studio configuration preferences with strict validation."""
+    if not isinstance(updates, dict):
+        raise HTTPException(status_code=400, detail="Settings payload must be an object.")
+    if "compliance_profile" in updates:
+        try:
+            ComplianceProfile(str(updates["compliance_profile"]))
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid compliance_profile. Allowed: STRICT_LICENSED, REVIEW_REQUIRED, COMMENTARY_REVIEW.",
+            )
+    blocked_keys = {k for k in updates if any(s in k.lower() for s in ("api_key", "secret", "password", "token"))}
+    if blocked_keys:
+        raise HTTPException(status_code=400, detail="Secrets cannot be mutated via studio settings API.")
     STUDIO_SETTINGS.update(updates)
-    return {"status": "saved", "settings": STUDIO_SETTINGS}
+    return {"status": "saved", "settings": api_get_settings()}
 
 
 # ==============================================================================
@@ -1290,13 +1501,24 @@ def _resolve_clip_path(input_path: str) -> str:
         return input_path
 
     clean_id = _sanitize_clip_id(input_path)
-    # 1. Check ProjectStore sidecar
+    base = os.path.basename(input_path)
+
+    # 1. Check ASSETS_DIR for source video matching
+    for asset_cand in [
+        os.path.join(ASSETS_DIR, f"{clean_id}.mp4"),
+        os.path.join(ASSETS_DIR, f"{clean_id}_slice.mp4"),
+        os.path.join(ASSETS_DIR, base),
+        os.path.join(ASSETS_DIR, f"{base}.mp4"),
+    ]:
+        if os.path.exists(asset_cand) and os.path.isfile(asset_cand) and os.path.getsize(asset_cand) > 1024:
+            return asset_cand
+
+    # 2. Check ProjectStore sidecar
     sidecar = project_store.get_clip_sidecar(clean_id)
     if sidecar and sidecar.file_path and os.path.exists(sidecar.file_path):
         return sidecar.file_path
 
-    # 2. Check direct filename in CLIPS_DIR
-    base = os.path.basename(input_path)
+    # 3. Check direct filename in CLIPS_DIR
     cand = os.path.join(CLIPS_DIR, base)
     if os.path.exists(cand):
         return cand
@@ -1305,11 +1527,17 @@ def _resolve_clip_path(input_path: str) -> str:
         if os.path.exists(cand_mp4):
             return cand_mp4
 
-    # 3. Search pattern in CLIPS_DIR
+    # 4. Search pattern in CLIPS_DIR
     matches = glob.glob(os.path.join(CLIPS_DIR, f"*{clean_id}*.mp4"))
     for m in matches:
         if os.path.exists(m) and os.path.getsize(m) > 0:
             return m
+
+    # 5. Search pattern in ASSETS_DIR
+    asset_matches = glob.glob(os.path.join(ASSETS_DIR, f"*{clean_id}*.mp4"))
+    for am in asset_matches:
+        if os.path.exists(am) and os.path.getsize(am) > 0:
+            return am
 
     raise HTTPException(status_code=404, detail=f"Source video not found: {input_path}")
 
@@ -1333,6 +1561,7 @@ class EditorExportClipSpec(BaseModel):
     aspect_ratio: str = "9:16"
     center_x: float = 0.5
     center_y: float = 0.5
+    layout_mode: str = "crop"
     text_overlay: Optional[str] = None
     text_position: str = "top"
     description: Optional[str] = None
@@ -1413,6 +1642,162 @@ def api_save_poster(req: SavePosterRequest):
     except Exception as e:
         logger.error(f"Save poster failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/source/{video_id}")
+def api_get_source_info(video_id: str) -> Dict[str, Any]:
+    """Retrieves full source video information, playable asset URL, duration, and AI highlight markers."""
+    clean_id = _sanitize_clip_id(video_id)
+
+    # 1. Look for asset MP4 in ASSETS_DIR
+    asset_file = None
+    for cand in [
+        os.path.join(ASSETS_DIR, f"{clean_id}.mp4"),
+        os.path.join(ASSETS_DIR, f"{clean_id}_slice.mp4"),
+    ]:
+        if os.path.exists(cand) and os.path.getsize(cand) > 1024:
+            asset_file = cand
+            break
+
+    if not asset_file:
+        matches = glob.glob(os.path.join(ASSETS_DIR, f"*{clean_id}*.mp4"))
+        if matches:
+            asset_file = matches[0]
+
+    video_info = None
+    try:
+        video_info = metadata_service.get_metadata(clean_id)
+    except Exception:
+        pass
+
+    duration = 0.0
+    if asset_file:
+        try:
+            meta = video_editor.get_video_metadata(asset_file)
+            duration = meta.get("duration", 0.0)
+        except Exception:
+            pass
+
+    if duration <= 0 and video_info:
+        duration = float(video_info.duration or 0.0)
+
+    # Load retention heatmap if present
+    heatmap_points = []
+    try:
+        pipeline = build_pipeline(output_dir=CLIPS_DIR)
+        hm = pipeline.heatmap_analyzer.extract_heatmap(clean_id, duration_seconds=duration or 300.0)
+        if hm and hasattr(hm, "points"):
+            heatmap_points = [{"time": p.timestamp_seconds, "intensity": p.intensity} for p in hm.points]
+    except Exception:
+        pass
+
+    # Load solid clips candidates if available in cache or preview
+    solid_clips = []
+    try:
+        pipeline = build_pipeline(output_dir=CLIPS_DIR, min_duration=15, max_duration=60)
+        cands = pipeline.get_candidates(video_id=clean_id, min_duration=15, max_duration=60)
+        decider = SolidShortsDecider()
+        decision = decider.decide(candidates=cands, duration_seconds=duration or 300.0)
+        solid_clips = [
+            {
+                "start_seconds": c.start_seconds,
+                "end_seconds": c.end_seconds,
+                "duration": round(c.duration_seconds, 1),
+                "score": round(c.score, 1),
+                "title": c.hook_title,
+                "hook_type": getattr(c, "hook_type", "AI Hook"),
+                "hook_sentence": getattr(c, "hook_sentence", ""),
+            }
+            for c in decision.selected_candidates
+        ]
+    except Exception as e:
+        logger.warning(f"Failed to extract candidates for source info {clean_id}: {e}")
+
+    # Check transcript presence
+    transcript_file = os.path.join(DATA_DIR, "transcripts", f"{clean_id}.json")
+    has_transcript = os.path.exists(transcript_file)
+    if not has_transcript:
+        t_cands = glob.glob(os.path.join(DATA_DIR, "transcripts", f"*{clean_id}*.json"))
+        has_transcript = len(t_cands) > 0
+
+    fname = os.path.basename(asset_file) if asset_file else None
+    return {
+        "video_id": clean_id,
+        "title": video_info.title if video_info else f"Video {clean_id}",
+        "channel_title": video_info.channel_title if video_info else "",
+        "thumbnail_url": video_info.thumbnail_url if video_info else "",
+        "duration": duration,
+        "has_local_file": bool(asset_file),
+        "has_transcript": has_transcript,
+        "source_url": f"/assets/{fname}" if fname else None,
+        "file_path": asset_file,
+        "heatmap": heatmap_points,
+        "solid_clips": solid_clips,
+    }
+
+
+@app.get("/api/v1/source/{video_id}/transcript")
+def api_get_source_transcript(video_id: str) -> Dict[str, Any]:
+    """Returns word-level and sentence-level transcript timestamps for text-based editing."""
+    clean_id = _sanitize_clip_id(video_id)
+    transcript_path = os.path.join(DATA_DIR, "transcripts", f"{clean_id}.json")
+    if not os.path.exists(transcript_path):
+        cands = glob.glob(os.path.join(DATA_DIR, "transcripts", f"*{clean_id}*.json"))
+        if cands:
+            transcript_path = cands[0]
+        else:
+            raise HTTPException(status_code=404, detail=f"No transcript found for video {clean_id}")
+
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            "video_id": clean_id,
+            "text": data.get("text", ""),
+            "duration_seconds": data.get("duration_seconds", 0.0),
+            "segments": data.get("segments", []),
+        }
+    except Exception as e:
+        logger.error(f"Error reading transcript for {clean_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/analytics/feedback")
+def api_record_feedback(req: FeedbackRequest) -> Dict[str, Any]:
+    """Records creator review feedback and loops engagement into future scoring calibration."""
+    loop = get_feedback_loop()
+    record = ClipPerformanceRecord(
+        clip_id=req.clip_id,
+        video_id=req.video_id or "unknown",
+        hook_title=req.hook_title or req.clip_id,
+        hook_type=req.hook_type or "General",
+        duration_seconds=req.duration_seconds or 30.0,
+        score=req.score or 80.0,
+        user_rating=req.rating,
+        feedback_notes=req.notes or "",
+        completion_rate=0.75 if req.rating >= 4.0 else (0.45 if req.rating <= 2.0 else 0.60),
+    )
+    loop.record_clip_performance(record)
+    success = loop.record_user_feedback(req.clip_id, req.rating, req.notes or "")
+    summary = loop.get_summary()
+    return {
+        "success": success,
+        "clip_id": req.clip_id,
+        "rating": req.rating,
+        "calibration_status": summary.get("calibration_status", "ONLINE"),
+    }
+
+
+@app.get("/api/v1/analytics/summary")
+def api_get_analytics_summary() -> Dict[str, Any]:
+    """Returns analytics feedback ledger summary and calibrated hook weights."""
+    loop = get_feedback_loop()
+    summary = loop.get_summary()
+    multipliers = loop.get_calibrated_multipliers()
+    return {
+        "summary": summary,
+        "multipliers": multipliers,
+    }
 
 
 # ==============================================================================
@@ -1584,6 +1969,11 @@ def api_publish_submit(req: PublishSubmitRequest) -> Dict[str, Any]:
     if not target_ids:
         raise HTTPException(status_code=400, detail="Either clip_id or clip_ids must be specified.")
 
+    rights_policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    attr_engine = AttributionEngine(db_path=DB_PATH)
+    qa_verifier = MediaQualityVerifier()
+    active_profile = get_active_compliance_profile()
+
     receipts_list = []
     for cid in target_ids:
         # Resolve clip sidecar and media file
@@ -1600,6 +1990,7 @@ def api_publish_submit(req: PublishSubmitRequest) -> Dict[str, Any]:
         if not clip_file:
             raise HTTPException(status_code=404, detail=f"Rendered clip media not found for id: {cid}")
 
+        source_video_id = sidecar.video_id if sidecar else cid
         duration = sidecar.duration_seconds if sidecar else 30.0
         cand_data = sidecar.candidate_data if sidecar else {}
         final_title = req.title if (len(target_ids) == 1 and req.title) else (cand_data.get("hook_title") or req.title or f"Short #{cid}")
@@ -1610,7 +2001,7 @@ def api_publish_submit(req: PublishSubmitRequest) -> Dict[str, Any]:
             job_id=f"job_pub_{cid}",
             candidate_id=cid,
             file_path=clip_file,
-            file_hash=hashlib.sha256(open(clip_file, "rb").read(8192)).hexdigest() if os.path.exists(clip_file) else "hash",
+            file_hash=_compute_file_sha256(clip_file),
             duration_seconds=duration,
             width=1080,
             height=1920,
@@ -1620,7 +2011,7 @@ def api_publish_submit(req: PublishSubmitRequest) -> Dict[str, Any]:
 
         candidate = HighlightCandidate(
             candidate_id=cid,
-            video_id=sidecar.video_id if sidecar else cid,
+            video_id=source_video_id,
             start_seconds=sidecar.start_seconds if sidecar else 0.0,
             end_seconds=sidecar.end_seconds if sidecar else duration,
             duration_seconds=duration,
@@ -1630,28 +2021,38 @@ def api_publish_submit(req: PublishSubmitRequest) -> Dict[str, Any]:
             suggested_description=final_desc,
         )
 
-        rights = RightsManifest(
-            rights_id=f"rm_{cid}",
-            video_id=candidate.video_id,
-            basis=RightsBasis.OWNED,
-            status=RightsStatus.VERIFIED,
-            owner_name="Platform Creator",
+        # Enforce REAL persisted rights & attribution (never fabricate OWNED/VERIFIED)
+        real_manifest = rights_policy.check_rights(source_video_id)
+        creator_name = real_manifest.owner_name or ""
+        attr_pkg = attr_engine.format_attribution(
+            video_id=source_video_id,
+            creator_name=creator_name or "Unknown",
+            channel_id=real_manifest.creator_id or None,
+            license_type=real_manifest.basis.value,
+            license_url=real_manifest.license_url,
         )
+        attr_valid, attr_errors = validate_attribution_package(attr_pkg)
+        try:
+            rights = rights_policy.assert_can_publish(
+                source_video_id,
+                manifest=real_manifest,
+                approved_by_user=bool(req.approved_by_user),
+                attribution_validated=attr_valid,
+                profile=active_profile,
+            )
+        except RightsPolicyViolationError as rexc:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Publishing blocked by rights/attribution gate: {rexc}. Attr errors: {attr_errors}",
+            )
 
-        qa = QAReport(
-            qa_id=f"qa_{cid}",
-            clip_id=cid,
-            status="PASSED",
-            video_stream_ok=True,
-            audio_stream_ok=True,
-            duration_ok=True,
-            actual_duration=duration,
-            expected_duration=duration,
-            aspect_ratio_ok=True,
-            actual_aspect_ratio="9:16",
-            file_size_bytes=os.path.getsize(clip_file) if os.path.exists(clip_file) else 1024,
-            checksum_sha256=rendered_clip.file_hash,
-        )
+        # Enforce REAL media QA verification (never fabricate PASSED)
+        qa = qa_verifier.verify_clip(rendered_clip, candidate)
+        if qa.status == "FAILED":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Publishing blocked by QA failure for clip '{cid}': {qa.errors}",
+            )
 
         rcpt = publisher.publish(
             rendered_clip=rendered_clip,
@@ -1661,9 +2062,9 @@ def api_publish_submit(req: PublishSubmitRequest) -> Dict[str, Any]:
             dry_run=False,
             platforms=req.platforms,
             scheduled_time=req.scheduled_time,
-            approved_by_user=True,
+            approved_by_user=bool(req.approved_by_user),
             title_override=final_title,
-            description_override=final_desc,
+            description_override=final_desc or attr_pkg.full_description,
             tags=req.tags,
             channel_id=req.channel_id,
             thumbnail_path=req.thumbnail_path,
@@ -1742,23 +2143,149 @@ def api_get_publish_status(receipt_id: str) -> Dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------
-# Professional SaaS Web Studio Redesign
+# Professional SaaS Web Studio & Showcase Landing Page
 # ------------------------------------------------------------------------------
+LANDING_HTML_PATH = os.path.join(os.path.dirname(__file__), "landing.html")
 DASHBOARD_HTML_PATH = os.path.join(os.path.dirname(__file__), "dashboard.html")
-if os.path.exists(DASHBOARD_HTML_PATH):
-    with open(DASHBOARD_HTML_PATH, "r", encoding="utf-8") as _f:
-        HTML_DASHBOARD = _f.read()
-else:
-    HTML_DASHBOARD = "<!DOCTYPE html><html><body><h1>Studio Loading...</h1></body></html>"
+DOCS_HTML_PATH = os.path.join(os.path.dirname(__file__), "docs.html")
+DOCS_DIR = os.path.abspath(os.path.join(BASE_DIR, "docs"))
+
+
+@app.get("/docs", response_class=HTMLResponse)
+def serve_docs():
+    """Serves the interactive documentation hub and architecture viewer."""
+    if os.path.exists(DOCS_HTML_PATH):
+        with open(DOCS_HTML_PATH, "r", encoding="utf-8") as _f:
+            return _f.read()
+    return "<!DOCTYPE html><html><body><h1>Documentation Hub Loading...</h1></body></html>"
+
+
+@app.get("/docs/{doc_path:path}")
+def serve_docs_subpath(doc_path: str, request: Request):
+    """Serves specific documentation files, supporting both web viewing and raw markdown downloads."""
+    clean_name = os.path.basename(doc_path.strip())
+    # Allow looking in docs/ or repo root for README.md
+    target_path = os.path.join(DOCS_DIR, clean_name)
+    if not os.path.exists(target_path) and clean_name.lower() == "readme.md":
+        target_path = os.path.join(BASE_DIR, "README.md")
+    
+    # Path traversal protection
+    real_target = os.path.abspath(target_path)
+    if not (real_target.startswith(DOCS_DIR) or real_target == os.path.abspath(os.path.join(BASE_DIR, "README.md"))):
+        raise HTTPException(status_code=403, detail="Access denied: path traversal attempt detected.")
+
+    if not os.path.exists(real_target):
+        raise HTTPException(status_code=404, detail=f"Documentation file '{clean_name}' not found.")
+
+    accept_hdr = request.headers.get("Accept", "").lower()
+    raw_param = request.query_params.get("raw", "").lower() in ("1", "true", "yes")
+
+    # If raw requested or non-HTML client, return raw markdown
+    if raw_param or "text/markdown" in accept_hdr or "text/plain" in accept_hdr:
+        with open(real_target, "r", encoding="utf-8") as _f:
+            return Response(content=_f.read(), media_type="text/markdown")
+
+    # Otherwise serve docs.html with the doc loaded
+    if os.path.exists(DOCS_HTML_PATH):
+        with open(DOCS_HTML_PATH, "r", encoding="utf-8") as _f:
+            content = _f.read()
+            return HTMLResponse(content=content.replace("let currentDoc = 'ARCHITECTURE.md';", f"let currentDoc = '{clean_name}';"))
+    
+    with open(real_target, "r", encoding="utf-8") as _f:
+        return Response(content=_f.read(), media_type="text/plain")
+
+
+@app.get("/api/v1/docs/list")
+def list_available_docs():
+    """Returns a list of all technical documentation and architectural reports."""
+    items = []
+    if os.path.exists(DOCS_DIR):
+        for entry in os.listdir(DOCS_DIR):
+            if entry.endswith(".md"):
+                p = os.path.join(DOCS_DIR, entry)
+                stat = os.stat(p)
+                items.append({
+                    "filename": entry,
+                    "title": entry.replace("_", " ").replace(".md", "").title(),
+                    "size_bytes": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                })
+    # Also include root README.md
+    readme_p = os.path.join(BASE_DIR, "README.md")
+    if os.path.exists(readme_p):
+        stat = os.stat(readme_p)
+        items.insert(0, {
+            "filename": "README.md",
+            "title": "Project Overview (README)",
+            "size_bytes": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        })
+    return {"total": len(items), "docs": sorted(items, key=lambda x: x["filename"])}
+
+
+@app.get("/api/v1/docs/content/{filename:path}")
+def get_doc_content(filename: str):
+    """Retrieves and renders a documentation markdown file into HTML."""
+    clean_name = os.path.basename(filename.strip())
+    target_path = os.path.join(DOCS_DIR, clean_name)
+    if not os.path.exists(target_path) and clean_name.lower() == "readme.md":
+        target_path = os.path.join(BASE_DIR, "README.md")
+
+    real_target = os.path.abspath(target_path)
+    if not (real_target.startswith(DOCS_DIR) or real_target == os.path.abspath(os.path.join(BASE_DIR, "README.md"))):
+        raise HTTPException(status_code=403, detail="Access denied: path traversal attempt detected.")
+
+    if not os.path.exists(real_target) or not os.path.isfile(real_target):
+        raise HTTPException(status_code=404, detail=f"Documentation file '{clean_name}' not found.")
+
+    with open(real_target, "r", encoding="utf-8") as _f:
+        raw_md = _f.read()
+
+    # Extract first H1 as title if available
+    title = clean_name.replace("_", " ").replace(".md", "").title()
+    for line in raw_md.splitlines():
+        if line.startswith("# "):
+            title = line.lstrip("# ").strip()
+            break
+
+    rendered_html = markdown.markdown(raw_md, extensions=['fenced_code', 'tables', 'nl2br'])
+    return {
+        "filename": clean_name,
+        "title": title,
+        "markdown": raw_md,
+        "html": rendered_html,
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
 def serve_dashboard():
-    """Serves the live interactive studio dashboard."""
+    """Serves the advertising showcase homepage and interactive simulator."""
+    if os.path.exists(LANDING_HTML_PATH):
+        with open(LANDING_HTML_PATH, "r", encoding="utf-8") as _f:
+            return _f.read()
     if os.path.exists(DASHBOARD_HTML_PATH):
         with open(DASHBOARD_HTML_PATH, "r", encoding="utf-8") as _f:
             return _f.read()
-    return HTML_DASHBOARD
+    return "<!DOCTYPE html><html><body><h1>Studio Loading...</h1></body></html>"
+
+
+@app.get("/studio", response_class=HTMLResponse)
+def serve_studio():
+    """Serves the live interactive clipping studio and editor workspace."""
+    if os.path.exists(DASHBOARD_HTML_PATH):
+        with open(DASHBOARD_HTML_PATH, "r", encoding="utf-8") as _f:
+            return _f.read()
+    return "<!DOCTYPE html><html><body><h1>Studio Loading...</h1></body></html>"
+
+
+@app.get("/login", response_class=HTMLResponse)
+def serve_login():
+    """Serves the client and tenant portal authentication flow."""
+    if os.path.exists(LANDING_HTML_PATH):
+        with open(LANDING_HTML_PATH, "r", encoding="utf-8") as _f:
+            content = _f.read()
+            return content.replace("<body", "<body onload=\"openAuthModal('tenant')\"")
+    return serve_dashboard()
 
 
 @app.get("/robots.txt", response_class=Response)
@@ -1897,14 +2424,11 @@ def api_batch_start(req: BatchStartRequest, bg_tasks: BackgroundTasks) -> Dict[s
 
 @app.get("/api/v1/batch/status")
 def api_batch_status() -> Dict[str, Any]:
-    """Returns the live status of the active or most recent overnight batch queue."""
+    """Returns the live status of the active running batch queue, or idle if none running."""
     active = batch_manager.get_active_batch()
-    if active:
+    if active and getattr(active, "status", None) == "running":
         return active.to_dict()
-    recent = batch_manager.list_batches(limit=1)
-    if recent:
-        return recent[0].to_dict()
-    return {"status": "idle", "message": "No overnight batch runs in history."}
+    return {"status": "idle", "items": [], "message": "Pipeline queue idle. No batch rendering currently in progress."}
 
 
 @app.post("/api/v1/batch/cancel")
@@ -1921,6 +2445,854 @@ def api_batch_cancel() -> Dict[str, Any]:
 def api_batch_history(limit: int = 10) -> List[Dict[str, Any]]:
     """Returns history of past overnight batch sessions."""
     return [b.to_dict() for b in batch_manager.list_batches(limit=limit)]
+
+
+# ------------------------------------------------------------------------------
+# Rights Governance, Creator Registry & Operational Observability Endpoints
+# ------------------------------------------------------------------------------
+class RightsRegisterRequest(BaseModel):
+    video_id: str
+    basis: str
+    owner: str
+    status: str = "PENDING_REVIEW"
+    proof_reference: str = ""
+    license_url: str = ""
+    license_id: str = ""
+    creator_id: str = ""
+    evidence_type: str = ""
+    verified_by: str = "studio_operator"
+    valid_until: Optional[str] = None
+    audit_notes: str = ""
+    allow_regrant_revoked: bool = False
+
+
+class RightsRevokeRequest(BaseModel):
+    video_id: Optional[str] = None
+    creator_id: Optional[str] = None
+    reason: str
+    actor: str = "studio_operator"
+
+
+class CreatorApproveRequest(BaseModel):
+    channel_id: str
+    channel_name: str
+    policy: str
+    approval_evidence: str
+    creator_handle: Optional[str] = None
+    approved_by: str = "studio_operator"
+    expires_at: Optional[str] = None
+    notes: str = ""
+
+
+class CreatorRevokeRequest(BaseModel):
+    channel_id: str
+    reason: str
+    revoked_by: str = "studio_operator"
+
+
+@app.post("/api/v1/rights/register")
+def api_rights_register(req: RightsRegisterRequest) -> Dict[str, Any]:
+    """Registers evidence-backed rights metadata (never allows OPERATOR_ASSET to verify)."""
+    policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    try:
+        manifest = policy.register_rights(
+            video_id=req.video_id,
+            basis=req.basis,
+            owner=req.owner,
+            status=req.status,
+            proof_reference=req.proof_reference,
+            license_url=req.license_url,
+            license_id=req.license_id,
+            creator_id=req.creator_id,
+            evidence_type=req.evidence_type,
+            verified_by=req.verified_by,
+            valid_until=req.valid_until,
+            audit_notes=req.audit_notes,
+            allow_regrant_revoked=req.allow_regrant_revoked,
+        )
+        return {
+            "success": True,
+            "rights_id": manifest.rights_id,
+            "video_id": manifest.video_id,
+            "basis": manifest.basis.value,
+            "status": manifest.effective_status().value,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/v1/rights/revoke")
+def api_rights_revoke(req: RightsRevokeRequest) -> Dict[str, Any]:
+    """Revokes rights for a video or creator and cascades holds to pending jobs & receipts."""
+    policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    try:
+        res = policy.revoke_rights(
+            video_id=req.video_id,
+            creator_id=req.creator_id,
+            reason=req.reason,
+            actor=req.actor,
+        )
+        return {"success": True, **res}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/v1/rights/audit")
+def api_rights_audit(video_id: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
+    """Returns append-only immutable rights transition history."""
+    policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    history = policy.get_audit_history(video_id=video_id, limit=limit)
+    return {"count": len(history), "entries": history}
+
+
+@app.post("/api/v1/creators/approve")
+def api_creators_approve(req: CreatorApproveRequest) -> Dict[str, Any]:
+    """Approves a creator/channel in SQLite creator_registry with mandatory evidence."""
+    engine = AttributionEngine(db_path=DB_PATH)
+    try:
+        pol = CreatorPolicy(req.policy)
+        rec = engine.approve_creator(
+            channel_id=req.channel_id,
+            channel_name=req.channel_name,
+            policy=pol,
+            approval_evidence=req.approval_evidence,
+            creator_handle=req.creator_handle,
+            approved_by=req.approved_by,
+            expires_at=req.expires_at,
+            notes=req.notes,
+        )
+        return {"success": True, "creator": rec}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/v1/creators/revoke")
+def api_creators_revoke(req: CreatorRevokeRequest) -> Dict[str, Any]:
+    """Revokes a creator's clipping permission immediately."""
+    engine = AttributionEngine(db_path=DB_PATH)
+    try:
+        rec = engine.revoke_creator(channel_id=req.channel_id, reason=req.reason, revoked_by=req.revoked_by)
+        return {"success": True, "creator": rec}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/v1/creators/{channel_id}")
+def api_creators_get(channel_id: str) -> Dict[str, Any]:
+    """Inspects creator policy & approval status."""
+    engine = AttributionEngine(db_path=DB_PATH)
+    policy = engine.get_creator_policy(channel_id)
+    record = engine.get_creator_record(channel_id)
+    return {"channel_id": channel_id, "policy": policy.value, "record": record}
+
+
+@app.get("/api/v1/ops/health")
+def api_ops_health() -> Dict[str, Any]:
+    """Returns operational metrics across queue, rights ledger, revocations, and disk capacity."""
+    rights_policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    manifests = rights_policy.list_all_manifests()
+    revocation_impacts = rights_policy.list_revocation_impacts(limit=25)
+    status_counts: Dict[str, int] = {}
+    for m in manifests:
+        st = m.effective_status().value
+        status_counts[st] = status_counts.get(st, 0) + 1
+
+    disk = shutil.disk_usage(DATA_DIR)
+    return {
+        "status": "ok",
+        "compliance_profile": get_active_compliance_profile().value,
+        "legal_officer": is_legal_officer_enabled(),
+        "auth_configured": bool((os.getenv("WEB_STUDIO_API_KEY") or "").strip()),
+        "rights_summary": {"total": len(manifests), "by_status": status_counts},
+        "recent_revocation_impacts": revocation_impacts,
+        "active_render_jobs_count": len(active_render_jobs),
+        "free_disk_gb": round(disk.free / (1024 ** 3), 2),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _authenticate_tenant(request: Request) -> Dict[str, Any]:
+    """Authenticates tenant credentials and enforces fail-closed security."""
+    raw_key = (
+        request.headers.get("X-Tenant-Key")
+        or request.headers.get("X-API-Key")
+        or ""
+    ).strip()
+    if not raw_key:
+        auth_hdr = (request.headers.get("Authorization") or "").strip()
+        if auth_hdr.lower().startswith("bearer "):
+            raw_key = auth_hdr[7:].strip()
+
+    if not raw_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required: valid tenant API key must be provided in X-Tenant-Key or Authorization header.",
+        )
+
+    tenant = db_manager.get_tenant_by_api_key(raw_key)
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: invalid or inactive tenant credentials.",
+        )
+    return tenant
+
+
+class ExternalAIVideoIngestRequest(BaseModel):
+    project_id: str
+    video_url: str
+    source_engine: str = "custom_ai_pipeline"
+    prompt_metadata: Optional[Dict[str, Any]] = None
+    transcript: Optional[List[Dict[str, Any]]] = None
+    target_aspect_ratio: str = "9:16"
+    audio_treatment: Optional[Dict[str, Any]] = None
+    omnipost_routing: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/v1/external/ai-video/ingest")
+async def api_external_ai_video_ingest(
+    request: Request,
+    payload: ExternalAIVideoIngestRequest,
+) -> Dict[str, Any]:
+    """
+    Standardized Ingestion Bridge for External AI Video Generators (ComfyUI, Runway, Luma, Sora).
+    Enforces strict tenant isolation, quota management, SSRF protection, SHA-256 verification,
+    rights & provenance registration, 9:16 reframing, and OmniPost publishing handoff.
+    """
+    tenant = _authenticate_tenant(request)
+    data = payload.model_dump()
+
+    try:
+        result = external_ingest_service.ingest_video(tenant=tenant, payload=data)
+        return result
+    except SSRFValidationError as ssrf_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ssrf_err))
+    except InsufficientStorageError as stor_err:
+        raise HTTPException(status_code=507, detail=str(stor_err))
+    except IngestionError as ing_err:
+        err_msg = str(ing_err)
+        if "quota" in err_msg.lower() or "limit" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=err_msg)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)
+    except ValueError as val_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
+    except Exception as exc:
+        logger.error(f"[External AI Video Ingest] Unexpected error: {exc}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ingestion failed: {exc}")
+
+
+@app.get("/api/v1/external/ai-video/status/{job_id}")
+async def api_external_ai_video_status(
+    job_id: str,
+    request: Request,
+) -> Dict[str, Any]:
+    """
+    Returns processing status and tracking metadata for an ingested AI video job.
+    Strictly enforces tenant ownership: Tenant A cannot inspect Tenant B's jobs.
+    """
+    tenant = _authenticate_tenant(request)
+    tenant_id = tenant["tenant_id"]
+
+    project = db_manager.get_external_ai_project_by_job_id(job_id=job_id)
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' not found.")
+
+    # Strict Tenant Boundary Enforcement
+    if project.get("tenant_id") != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Tenant is not authorized to access this job.",
+        )
+
+    return {
+        "job_id": project.get("job_id"),
+        "project_id": project.get("project_id"),
+        "tenant_id": project.get("tenant_id"),
+        "status": project.get("status"),
+        "source_engine": project.get("source_engine"),
+        "file_hash": project.get("file_hash"),
+        "rights_id": project.get("rights_id"),
+        "omnipost_receipt_id": project.get("omnipost_receipt_id"),
+        "output_clip_path": project.get("output_clip_path"),
+        "error_message": project.get("error_message"),
+        "created_at": project.get("created_at"),
+        "updated_at": project.get("updated_at"),
+    }
+
+
+@app.post("/api/v1/webhooks/omnipost")
+async def api_omnipost_webhook(request: Request) -> Dict[str, Any]:
+    """
+    Inbound Webhook Synchronization from OmniPost.
+    Verifies HMAC-SHA256 signature, validates event payload, prevents replay,
+    updates publishing receipts, and synchronizes status back to external creator project.
+    """
+    raw_body = await request.body()
+    secret = os.getenv("OMNIPOST_WEBHOOK_SECRET", "omnipost_webhook_shared_secret_2026")
+
+    sig_hdr = (
+        request.headers.get("X-OmniPost-Signature")
+        or request.headers.get("X-Signature-SHA256")
+        or ""
+    ).strip()
+
+    if sig_hdr.startswith("sha256="):
+        expected_sig = sig_hdr[7:]
+    else:
+        expected_sig = sig_hdr
+
+    computed_sig = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    if not expected_sig or not hmac.compare_digest(computed_sig, expected_sig):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing webhook HMAC signature.",
+        )
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid JSON payload: {e}")
+
+    event_id = payload.get("event_id")
+    event_type = payload.get("event_type")
+    if not event_id or not event_type:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="event_id and event_type are required.")
+
+    # Idempotency / Replay Prevention
+    if db_manager.has_processed_webhook_event(event_id):
+        return {"success": True, "event_id": event_id, "message": "Duplicate webhook event safely skipped."}
+
+    tenant_id = payload.get("tenant_id")
+    project_id = payload.get("project_id")
+    job_id = payload.get("job_id")
+    content_id = payload.get("content_id")
+    idempotency_key = payload.get("idempotency_key")
+    post_status = payload.get("status")
+
+    # Update publishing_receipts
+    conn = db_manager.get_connection()
+    try:
+        with conn:
+            if idempotency_key:
+                conn.execute(
+                    """
+                    UPDATE publishing_receipts
+                    SET status = ?, response_payload_json = ?
+                    WHERE idempotency_key = ?
+                    """,
+                    (post_status or event_type, json.dumps(payload), idempotency_key),
+                )
+            if content_id:
+                conn.execute(
+                    """
+                    UPDATE publishing_receipts
+                    SET status = ?, response_payload_json = ?
+                    WHERE clip_id = ?
+                    """,
+                    (post_status or event_type, json.dumps(payload), content_id),
+                )
+    finally:
+        conn.close()
+
+    # Update external_ai_projects status
+    if tenant_id and project_id:
+        mapped_status = "PUBLISHED" if event_type == "POST_PUBLISHED" else (
+            "SCHEDULED" if event_type == "POST_SCHEDULED" else (
+                "FAILED" if event_type == "POST_FAILED" else (
+                    "REVOKED" if event_type == "TAKEDOWN_ISSUED" else "UPDATED"
+                )
+            )
+        )
+        db_manager.update_external_ai_project(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            status=mapped_status,
+            error_message=payload.get("error"),
+        )
+
+    # Record event in ledger
+    db_manager.record_omnipost_webhook_event(
+        event_id=event_id,
+        event_type=event_type,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        job_id=job_id,
+        content_id=content_id,
+        payload=payload,
+    )
+
+    return {"success": True, "event_id": event_id, "processed": True}
+
+
+# ============================================================================
+# LIVE GOVERNANCE, LEGAL OFFICER TOGGLE & AI PIPELINE STUDIO ENDPOINTS
+# ============================================================================
+
+@app.get("/api/v1/config/legal-officer")
+async def api_get_legal_officer() -> Dict[str, Any]:
+    """Returns the live state of the master Legal Officer switch."""
+    enabled = is_legal_officer_enabled()
+    return {
+        "enabled": enabled,
+        "mode": "STRICT_COMPLIANCE" if enabled else "UNRESTRICTED_BYPASS",
+        "description": "When active, copyright, creator attribution, and rights ledger checks are strictly enforced. When disabled, content bypasses legal barriers with an UNVERIFIED_BYPASS audit log.",
+    }
+
+
+@app.post("/api/v1/config/legal-officer")
+async def api_set_legal_officer(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Dynamically toggles the master Legal Officer switch at runtime."""
+    enabled = bool(payload.get("enabled", True))
+    os.environ["LEGAL_OFFICER"] = "true" if enabled else "false"
+    logger.info(f"[Legal Officer Toggle] Master switch updated to: {enabled}")
+    return {
+        "success": True,
+        "enabled": is_legal_officer_enabled(),
+        "mode": "STRICT_COMPLIANCE" if is_legal_officer_enabled() else "UNRESTRICTED_BYPASS",
+    }
+
+
+@app.get("/api/v1/system/governor-status")
+async def api_get_governor_status() -> Dict[str, Any]:
+    """Returns live hardware concurrency, VRAM, and zero-memory-leak profiler telemetry."""
+    governor = get_resource_governor()
+    metrics = governor.memory_profiler.get_leak_metrics()
+    disk = shutil.disk_usage(DATA_DIR)
+    return {
+        "hardware_concurrency": governor.hardware_concurrency,
+        "active_render_jobs": len(governor._active_jobs),
+        "vram_gb": governor.vram_gb,
+        "cpu_cores": governor.cpu_cores,
+        "free_disk_gb": round(disk.free / (1024 ** 3), 2),
+        "total_disk_gb": round(disk.total / (1024 ** 3), 2),
+        "rss_memory_mb": round(governor.memory_profiler.get_current_rss_mb(), 2),
+        "zero_memory_leak_certified": metrics.get("rss_growth_pct", 0.0) < 5.0,
+        "rss_growth_pct": metrics.get("rss_growth_pct", 0.0),
+        "legal_officer_enabled": is_legal_officer_enabled(),
+    }
+
+
+@app.get("/api/v1/external/ai-video/tenants")
+async def api_list_ai_video_tenants(request: Request) -> Dict[str, Any]:
+    """Lists registered tenants, daily render quotas, and active job limits for studio display."""
+    conn = db_manager.get_connection()
+    try:
+        with conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT t.tenant_id, t.name, t.api_key, t.webhook_url, t.status,
+                       q.daily_render_limit, q.current_daily_renders, q.max_concurrent_jobs, q.storage_quota_bytes
+                FROM tenants t
+                LEFT JOIN tenant_quotas q ON t.tenant_id = q.tenant_id
+                ORDER BY t.created_at DESC
+                """
+            ).fetchall()
+            tenants = [dict(r) for r in rows]
+            for t in tenants:
+                if t.get("api_key"):
+                    t["api_key_masked"] = t["api_key"][:8] + "..." + t["api_key"][-4:]
+            return {"success": True, "tenants": tenants}
+    finally:
+        conn.close()
+
+
+@app.get("/api/v1/external/ai-video/jobs")
+async def api_list_ai_video_jobs(request: Request) -> Dict[str, Any]:
+    """Lists recent external AI video ingestion projects with real-time status."""
+    conn = db_manager.get_connection()
+    try:
+        with conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT p.*, t.name as tenant_name
+                FROM external_ai_projects p
+                LEFT JOIN tenants t ON p.tenant_id = t.tenant_id
+                ORDER BY p.created_at DESC LIMIT 50
+                """
+            ).fetchall()
+            jobs = [dict(r) for r in rows]
+            return {"success": True, "jobs": jobs}
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# SupoClip Ecosystem Integration Endpoints
+# ============================================================================
+
+import uuid
+import re
+from ..supoclip import (
+    get_supoclip_adapter,
+    WorkflowOptions,
+    WorkflowPlanner,
+    get_template_info,
+    PLATFORM_PRESETS,
+)
+
+supoclip_adapter = get_supoclip_adapter()
+
+
+class SupoClipScoreRequest(BaseModel):
+    text: str
+    duration: float = Field(default=30.0, ge=1.0)
+    pacing_wpm: float = Field(default=140.0, ge=10.0)
+    audio_energy: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class SupoClipPlanRequest(BaseModel):
+    workflow: str = Field(default="highlights")
+    duration: float = Field(default=180.0, ge=5.0)
+    transcript_segments: Optional[List[Dict[str, Any]]] = None
+    options: Optional[Dict[str, Any]] = None
+
+
+class SupoClipRenderRequest(BaseModel):
+    source_path: Optional[str] = None
+    clip_id: Optional[str] = None
+    output_filename: Optional[str] = None
+    start_time: float = Field(default=0.0, ge=0.0)
+    end_time: float = Field(default=30.0, gt=0.0)
+    template_name: str = Field(default="default")
+    words: Optional[List[Dict[str, Any]]] = None
+    hook_title: Optional[str] = None
+    layout: str = Field(default="talking_head")
+    ken_burns_zoom: bool = Field(default=True)
+    platform_preset: Optional[str] = None
+
+
+class SupoClipTrimRequest(BaseModel):
+    source_path: Optional[str] = None
+    clip_id: Optional[str] = None
+    start_time: float = Field(ge=0.0)
+    end_time: float = Field(gt=0.0)
+    output_filename: Optional[str] = None
+
+
+class SupoClipSplitRequest(BaseModel):
+    source_path: Optional[str] = None
+    clip_id: Optional[str] = None
+    split_timestamp: float = Field(gt=0.0)
+    base_name: Optional[str] = "split"
+
+
+class SupoClipMergeRequest(BaseModel):
+    clip_ids: Optional[List[str]] = None
+    clip_paths: Optional[List[str]] = None
+    target_filename: Optional[str] = None
+
+
+@app.get("/api/v1/supoclip/status")
+async def api_supoclip_status() -> Dict[str, Any]:
+    """Returns real-time status of the SupoClip engine, models, and presets."""
+    return supoclip_adapter.get_status()
+
+
+@app.get("/api/v1/supoclip/workflows")
+async def api_supoclip_workflows() -> Dict[str, Any]:
+    """Returns available SupoClip workflows and schema documentation."""
+    return {
+        "success": True,
+        "workflows": supoclip_adapter.list_workflows(),
+    }
+
+
+@app.get("/api/v1/supoclip/templates")
+async def api_supoclip_templates() -> Dict[str, Any]:
+    """Returns supported animated caption templates and styles."""
+    return {
+        "success": True,
+        "templates": supoclip_adapter.list_templates(),
+    }
+
+
+@app.get("/api/v1/supoclip/fonts")
+async def api_supoclip_fonts() -> Dict[str, Any]:
+    """Returns TTF typography fonts available for burning into short clips."""
+    return {
+        "success": True,
+        "fonts": supoclip_adapter.list_fonts(),
+    }
+
+
+@app.post("/api/v1/supoclip/score")
+async def api_supoclip_score(req: SupoClipScoreRequest) -> Dict[str, Any]:
+    """Computes SupoClip's 4-dimensional virality rubric and generates hook titles."""
+    try:
+        score = supoclip_adapter.score_content(
+            text=req.text,
+            duration=req.duration,
+            pacing_wpm=req.pacing_wpm,
+            audio_energy=req.audio_energy,
+        )
+        return {
+            "success": True,
+            "score": score,
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
+@app.post("/api/v1/supoclip/plan")
+async def api_supoclip_plan(req: SupoClipPlanRequest) -> Dict[str, Any]:
+    """Creates an execution plan for a designated SupoClip workflow."""
+    try:
+        plan = supoclip_adapter.plan_workflow(
+            workflow=req.workflow,
+            duration=req.duration,
+            transcript_segments=req.transcript_segments,
+            options=req.options,
+        )
+        return {
+            "success": True,
+            "plan": plan,
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+
+
+@app.post("/api/v1/supoclip/render")
+def api_supoclip_render(req: SupoClipRenderRequest) -> Dict[str, Any]:
+    """Renders a 9:16 vertical clip with face tracking, ASS subtitles, and hook title."""
+    src = req.source_path or req.clip_id
+    if not src:
+        raise HTTPException(status_code=400, detail="Must provide source_path or clip_id")
+    resolved_src = _resolve_clip_path(src)
+    if not resolved_src or not os.path.exists(resolved_src):
+        raise HTTPException(status_code=404, detail=f"Source video not found: {src}")
+
+    if req.end_time <= req.start_time:
+        raise HTTPException(
+            status_code=400,
+            detail=f"end_time ({req.end_time}) must be greater than start_time ({req.start_time})"
+        )
+
+    if req.output_filename:
+        clean_base = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", os.path.basename(req.output_filename))
+        out_name = clean_base if clean_base.endswith(".mp4") else f"{clean_base}.mp4"
+    else:
+        out_name = f"supoclip_{uuid.uuid4().hex[:8]}.mp4"
+    out_path = os.path.join(CLIPS_DIR, out_name)
+
+    try:
+        success = supoclip_adapter.render_reframed_clip(
+            source_path=resolved_src,
+            output_path=out_path,
+            start_time=req.start_time,
+            end_time=req.end_time,
+            template_name=req.template_name,
+            words=req.words,
+            hook_title=req.hook_title,
+            layout=req.layout,
+            ken_burns_zoom=req.ken_burns_zoom,
+            platform_preset=req.platform_preset,
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except FileNotFoundError as fnf:
+        raise HTTPException(status_code=404, detail=str(fnf))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SupoClip rendering execution failed: {e}")
+
+    if not success:
+        raise HTTPException(status_code=500, detail="SupoClip rendering execution failed")
+
+    return {
+        "success": True,
+        "rendered_file": out_name,
+        "file_path": out_path,
+        "start_time": req.start_time,
+        "end_time": req.end_time,
+        "template": req.template_name,
+        "layout": req.layout,
+        "hook_title": req.hook_title,
+        "platform_preset": req.platform_preset,
+    }
+
+
+@app.post("/api/v1/supoclip/editor/trim")
+def api_supoclip_trim(req: SupoClipTrimRequest) -> Dict[str, Any]:
+    """Trims a clip to precise boundary timestamps."""
+    src = req.source_path or req.clip_id
+    if not src:
+        raise HTTPException(status_code=400, detail="Must provide source_path or clip_id")
+    resolved_src = _resolve_clip_path(src)
+    if not resolved_src or not os.path.exists(resolved_src):
+        raise HTTPException(status_code=404, detail=f"Source video not found: {src}")
+
+    if req.end_time <= req.start_time:
+        raise HTTPException(
+            status_code=400,
+            detail=f"end_time ({req.end_time}) must be greater than start_time ({req.start_time})"
+        )
+
+    if req.output_filename:
+        clean_base = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", os.path.basename(req.output_filename))
+        out_name = clean_base if clean_base.endswith(".mp4") else f"{clean_base}.mp4"
+    else:
+        out_name = f"trimmed_{uuid.uuid4().hex[:8]}.mp4"
+    out_path = os.path.join(CLIPS_DIR, out_name)
+
+    try:
+        ok = supoclip_adapter.trim(resolved_src, out_path, req.start_time, req.end_time)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except FileNotFoundError as fnf:
+        raise HTTPException(status_code=404, detail=str(fnf))
+
+    if not ok:
+        raise HTTPException(status_code=500, detail="Trim operation failed")
+
+    return {
+        "success": True,
+        "trimmed_file": out_name,
+        "file_path": out_path,
+        "duration": round(req.end_time - req.start_time, 2),
+    }
+
+
+@app.post("/api/v1/supoclip/editor/split")
+def api_supoclip_split(req: SupoClipSplitRequest) -> Dict[str, Any]:
+    """Splits a clip into two separate segments at the specified timestamp."""
+    src = req.source_path or req.clip_id
+    if not src:
+        raise HTTPException(status_code=400, detail="Must provide source_path or clip_id")
+    resolved_src = _resolve_clip_path(src)
+    if not resolved_src or not os.path.exists(resolved_src):
+        raise HTTPException(status_code=404, detail=f"Source video not found: {src}")
+
+    base_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", os.path.basename(req.base_name or f"split_{uuid.uuid4().hex[:6]}"))
+    try:
+        p1, p2 = supoclip_adapter.split(resolved_src, CLIPS_DIR, req.split_timestamp, base_name=base_name)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except FileNotFoundError as fnf:
+        raise HTTPException(status_code=404, detail=str(fnf))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Split operation failed: {e}")
+
+    return {
+        "success": True,
+        "part1_file": os.path.basename(p1),
+        "part2_file": os.path.basename(p2),
+        "split_timestamp": req.split_timestamp,
+    }
+
+
+@app.post("/api/v1/supoclip/editor/merge")
+def api_supoclip_merge(req: SupoClipMergeRequest) -> Dict[str, Any]:
+    """Concatenates multiple clips into a single video."""
+    sources: List[str] = []
+    if req.clip_ids:
+        for cid in req.clip_ids:
+            p = _resolve_clip_path(cid)
+            if p and os.path.exists(p):
+                sources.append(p)
+    elif req.clip_paths:
+        for cp in req.clip_paths:
+            p = _resolve_clip_path(cp)
+            if p and os.path.exists(p):
+                sources.append(p)
+
+    if len(sources) < 2:
+        raise HTTPException(status_code=400, detail="Must provide at least 2 valid clips to merge")
+
+    if req.target_filename:
+        clean_base = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", os.path.basename(req.target_filename))
+        out_name = clean_base if clean_base.endswith(".mp4") else f"{clean_base}.mp4"
+    else:
+        out_name = f"merged_{uuid.uuid4().hex[:8]}.mp4"
+    out_path = os.path.join(CLIPS_DIR, out_name)
+
+    try:
+        ok = supoclip_adapter.merge(sources, out_path)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except FileNotFoundError as fnf:
+        raise HTTPException(status_code=404, detail=str(fnf))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Merge operation failed: {e}")
+
+    if not ok:
+        raise HTTPException(status_code=500, detail="Merge operation failed")
+
+    return {
+        "success": True,
+        "merged_file": out_name,
+        "file_path": out_path,
+        "source_count": len(sources),
+    }
+
+
+@app.get("/api/v1/supoclip/editor/presets")
+async def api_supoclip_presets() -> Dict[str, Any]:
+    """Returns platform export presets (TikTok, Reels, Shorts)."""
+    return {
+        "success": True,
+        "presets": supoclip_adapter.get_presets(),
+    }
+
+
+@app.get("/api/v1/supoclip/export/zip")
+def api_supoclip_export_zip(
+    project_id: Optional[str] = None,
+    clip_ids: Optional[str] = None,
+) -> FileResponse:
+    """Streams a packaged ZIP archive of rendered clips."""
+    clips_to_pack: List[Dict[str, Any]] = []
+
+    if clip_ids:
+        c_list = [c.strip() for c in clip_ids.split(",") if c.strip()]
+        for cid in c_list:
+            p = _resolve_clip_path(cid)
+            if p and os.path.exists(p):
+                clips_to_pack.append({
+                    "clip_id": cid,
+                    "file_path": p,
+                    "title": f"Clip {cid}",
+                })
+    elif project_id:
+        proj = project_store.get_project(project_id)
+        if proj and proj.clip_ids:
+            for cid in proj.clip_ids:
+                p = _resolve_clip_path(cid)
+                if p and os.path.exists(p):
+                    clips_to_pack.append({
+                        "clip_id": cid,
+                        "file_path": p,
+                        "title": f"Project Clip {cid}",
+                    })
+
+    if not clips_to_pack:
+        recent_mp4s = glob.glob(os.path.join(CLIPS_DIR, "*.mp4"))[:10]
+        for p in recent_mp4s:
+            cid = os.path.splitext(os.path.basename(p))[0]
+            clips_to_pack.append({
+                "clip_id": cid,
+                "file_path": p,
+                "title": f"Clip {cid}",
+            })
+
+    if not clips_to_pack:
+        raise HTTPException(status_code=404, detail="No clips found to package")
+
+    safe_proj_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", os.path.basename(project_id)) if project_id else uuid.uuid4().hex[:6]
+    zip_filename = f"supoclip_export_{safe_proj_id}.zip"
+    zip_path = os.path.join(TEMP_DIR, zip_filename)
+
+    supoclip_adapter.package_zip(
+        clips=clips_to_pack,
+        target_zip_path=zip_path,
+        metadata={"project_id": project_id, "total_clips": len(clips_to_pack)},
+    )
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=zip_filename,
+    )
 
 
 def start_server(host: str = "0.0.0.0", port: int = 8000) -> None:

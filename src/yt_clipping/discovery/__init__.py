@@ -12,6 +12,8 @@ from .attribution_engine import (
     AttributionEngine,
     CreatorPolicy,
     AttributionPackage,
+    SAFE_CREATOR_POLICIES,
+    validate_attribution_package,
 )
 from .channel_registry import ChannelRegistry
 from .channel_watcher import ChannelWatcher
@@ -37,6 +39,8 @@ __all__ = [
     "AttributionEngine",
     "CreatorPolicy",
     "AttributionPackage",
+    "SAFE_CREATOR_POLICIES",
+    "validate_attribution_package",
     "ChannelRegistry",
     "ChannelWatcher",
     "DiscoveryDaemon",
@@ -52,3 +56,4 @@ __all__ = [
 ]
 
 from .video_metadata import VideoMetadataService, EnrichedVideoInfo, normalize_youtube_url
+from .risk_classifier import RiskClassificationRegistry, SourceClassification

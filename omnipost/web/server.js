@@ -7,6 +7,8 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
+import dns from 'dns';
+import net from 'net';
 import * as db from './db.js';
 // Adapters are reached through the registry, which is the single source of
 // truth for which channels exist and what each one needs.
@@ -16,6 +18,190 @@ import * as publishState from './publishing/state.js';
 import { selectDue } from './publishing/schedule.js';
 import * as authz from './auth.js';
 import { createN8nClient, multipartBody } from './n8n-client.js';
+
+// Multi-Tenant Workspace & Social Account Routing Registry
+const WORKSPACE_REGISTRY = new Map([
+  ['workspace-tenant-alpha', {
+    tenantId: 'tenant-alpha',
+    accounts: {
+      youtube: 'yt-channel-alpha',
+      instagram: 'ig-alpha-reels',
+      tiktok: 'tt-alpha-creator',
+      facebook: 'fb-page-alpha',
+      threads: 'th-alpha'
+    }
+  }],
+  ['workspace-tenant-beta', {
+    tenantId: 'tenant-beta',
+    accounts: {
+      youtube: 'yt-channel-beta',
+      instagram: 'ig-beta-reels',
+      tiktok: 'tt-beta-creator',
+      facebook: 'fb-page-beta',
+      threads: 'th-beta'
+    }
+  }],
+  ['default-workspace', {
+    tenantId: 'default',
+    accounts: {
+      youtube: 'yt-default',
+      instagram: 'ig-default'
+    }
+  }]
+]);
+
+const CHANNEL_ALIAS_MAP = {
+  youtube_shorts: 'youtube',
+  youtube: 'youtube',
+  instagram_reels: 'instagram',
+  instagram: 'instagram',
+  facebook_reels: 'facebook',
+  facebook: 'facebook',
+  threads: 'threads',
+  linkedin: 'linkedin',
+  pinterest: 'pinterest',
+  tiktok: 'tiktok'
+};
+
+function verifyTenantWorkspace(tenantId, workspaceId) {
+  const cleanTenant = String(tenantId || '').trim();
+  const cleanWorkspace = String(workspaceId || '').trim();
+
+  if (!cleanTenant && !cleanWorkspace) {
+    return { ok: true, tenantId: 'default', workspaceId: 'default-workspace' };
+  }
+
+  if (cleanWorkspace && WORKSPACE_REGISTRY.has(cleanWorkspace)) {
+    const ws = WORKSPACE_REGISTRY.get(cleanWorkspace);
+    if (cleanTenant && ws.tenantId !== cleanTenant) {
+      return {
+        ok: false,
+        status: 403,
+        code: 'CROSS_TENANT_WORKSPACE_FORBIDDEN',
+        message: `Tenant '${cleanTenant}' is not authorized to publish to workspace '${cleanWorkspace}'.`
+      };
+    }
+    return { ok: true, tenantId: ws.tenantId, workspaceId: cleanWorkspace, accounts: ws.accounts };
+  }
+
+  if (cleanTenant && cleanWorkspace) {
+    if (cleanWorkspace.startsWith('workspace-tenant-') && !cleanWorkspace.endsWith(cleanTenant)) {
+      return {
+        ok: false,
+        status: 403,
+        code: 'CROSS_TENANT_WORKSPACE_FORBIDDEN',
+        message: `Workspace '${cleanWorkspace}' does not belong to tenant '${cleanTenant}'.`
+      };
+    }
+
+    WORKSPACE_REGISTRY.set(cleanWorkspace, {
+      tenantId: cleanTenant,
+      accounts: {
+        youtube: `yt-${cleanTenant}`,
+        instagram: `ig-${cleanTenant}`,
+        tiktok: `tt-${cleanTenant}`
+      }
+    });
+    return {
+      ok: true,
+      tenantId: cleanTenant,
+      workspaceId: cleanWorkspace,
+      accounts: WORKSPACE_REGISTRY.get(cleanWorkspace).accounts
+    };
+  }
+
+  return { ok: true, tenantId: cleanTenant || 'default', workspaceId: cleanWorkspace || 'default-workspace' };
+}
+
+function resolveTenantAccounts(tenantId, workspaceId, requestedChannels = []) {
+  const verification = verifyTenantWorkspace(tenantId, workspaceId);
+  if (!verification.ok) {
+    return verification;
+  }
+
+  const rawList = Array.isArray(requestedChannels) ? requestedChannels : [requestedChannels];
+  const matchedAccounts = {};
+  const canonicalPlatforms = [];
+
+  for (const item of rawList) {
+    const raw = String(item || '').trim().toLowerCase();
+    const canonical = CHANNEL_ALIAS_MAP[raw] || raw;
+    canonicalPlatforms.push(canonical);
+
+    if (verification.accounts && verification.accounts[canonical]) {
+      matchedAccounts[canonical] = verification.accounts[canonical];
+    } else {
+      matchedAccounts[canonical] = `${canonical}-account-${verification.tenantId}`;
+    }
+  }
+
+  return {
+    ok: true,
+    tenantId: verification.tenantId,
+    workspaceId: verification.workspaceId,
+    canonicalPlatforms: [...new Set(canonicalPlatforms)],
+    matchedAccounts
+  };
+}
+
+async function dispatchSignedWebhook({
+  eventType,
+  tenantId,
+  workspaceId,
+  projectId,
+  jobId,
+  contentId,
+  idempotencyKey,
+  status,
+  platforms,
+  metrics,
+  error = null,
+  webhookUrl = process.env.YT_CLIPPING_WEBHOOK_URL || 'http://localhost:8000/api/v1/webhooks/omnipost',
+  secret = process.env.OMNIPOST_WEBHOOK_SECRET || 'omnipost_webhook_shared_secret_2026'
+}) {
+  const eventId = `evt_${crypto.randomUUID().slice(0, 12)}`;
+  const nowIso = new Date().toISOString();
+
+  const payload = {
+    event_id: eventId,
+    event_type: eventType,
+    timestamp: nowIso,
+    tenant_id: tenantId,
+    workspace_id: workspaceId,
+    project_id: projectId,
+    job_id: jobId,
+    content_id: contentId,
+    idempotency_key: idempotencyKey,
+    platforms: platforms || [],
+    status: status,
+    publication_urls: (platforms || []).reduce((acc, p) => {
+      acc[p] = `https://${p}.com/published/${contentId || eventId}`;
+      return acc;
+    }, {}),
+    metrics: metrics || { views: 0, likes: 0, comments: 0 },
+    error: error
+  };
+
+  const payloadJson = JSON.stringify(payload);
+  const signature = crypto.createHmac('sha256', secret).update(payloadJson).digest('hex');
+
+  try {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-OmniPost-Signature': `sha256=${signature}`,
+        'X-Signature-SHA256': signature,
+        'User-Agent': 'OmniPost-Publisher/2.0'
+      },
+      body: payloadJson
+    });
+    return { ok: res.ok, status: res.status, eventId };
+  } catch (err) {
+    console.warn(`[OmniPost Webhook] Delivery to ${webhookUrl} failed: ${err.message}`);
+    return { ok: false, error: err.message, eventId };
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,7 +217,199 @@ const PORT = process.env.PORT || process.env.WEB_PORT || 3300;
 const DATA_DIR = path.join(__dirname, 'data');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const MEDIA_UPLOADS_DIR = path.join(UPLOADS_DIR, 'media');
-const STAGING_DIR = path.join(os.tmpdir(), 'omnipost-upload-staging');
+const STAGING_DIR = process.env.OMNIPOST_STAGING_DIR || (process.env.OMNIPOST_DATA_DIR ? path.join(process.env.OMNIPOST_DATA_DIR, 'staging') : path.join(os.tmpdir(), 'omnipost-upload-staging'));
+
+// ---------------------------------------------------------------------------
+// Rights Compliance, SSRF Defense & Idempotent V2 Ingest Helpers
+// ---------------------------------------------------------------------------
+const revokedAssetIds = new Set();
+const ingestIdempotencyCache = new Map();
+
+const VALID_COMPLIANCE_BASES = new Set([
+  'OWNED',
+  'EXPLICIT_PERMISSION',
+  'CREATIVE_COMMONS',
+  'VERIFIED_LICENSE',
+  'COMMENTARY_TRANSFORM',
+  'AI_GENERATED_ORIGINAL'
+]);
+
+function isLegalOfficerEnabled() {
+  const raw = process.env.LEGAL_OFFICER;
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return true;
+  }
+  return !['false', '0', 'no', 'off'].includes(String(raw).trim().toLowerCase());
+}
+
+function isPrivateOrReservedIp(ip) {
+  if (!ip) return true;
+  const clean = String(ip).trim().toLowerCase();
+  const mappedV4 = clean.startsWith('::ffff:') ? clean.slice(7) : clean;
+  if (net.isIPv4(mappedV4)) {
+    const parts = mappedV4.split('.').map(Number);
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+  }
+  if (clean === '::1' || clean === '::') return true;
+  if (clean.startsWith('fc') || clean.startsWith('fd') || clean.startsWith('fe80:')) return true;
+  return false;
+}
+
+async function assertSafeExternalUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return { ok: true };
+  let parsed;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    return { ok: false, status: 400, code: 'INVALID_URL', message: 'Invalid external URL format.' };
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return { ok: false, status: 400, code: 'SSRF_BLOCKED', message: `Disallowed URL scheme: ${parsed.protocol}` };
+  }
+  const host = (parsed.hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || host === '0.0.0.0' || host === 'metadata.google.internal' || host === '169.254.169.254') {
+    return { ok: false, status: 400, code: 'SSRF_BLOCKED', message: `Internal or loopback host rejected: ${host}` };
+  }
+  if (net.isIP(host)) {
+    if (isPrivateOrReservedIp(host)) {
+      return { ok: false, status: 400, code: 'SSRF_BLOCKED', message: `Private or reserved IP address rejected: ${host}` };
+    }
+    return { ok: true };
+  }
+  try {
+    const records = await dns.promises.lookup(host, { all: true });
+    for (const rec of records) {
+      if (isPrivateOrReservedIp(rec.address)) {
+        return { ok: false, status: 400, code: 'SSRF_BLOCKED', message: `Hostname resolves to private/reserved IP (${rec.address})` };
+      }
+    }
+  } catch {
+    // Offline DNS lookup unavailable for non-literal domain; hostname checks above still apply.
+  }
+  return { ok: true };
+}
+
+function parseMaybeJson(val) {
+  if (typeof val !== 'string') return val;
+  const trimmed = val.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return val;
+  }
+}
+
+async function validateCompliancePayload(body, { requireAllFields = false } = {}) {
+  const payload = body || {};
+  const strictEnv = process.env.OMNIPOST_REQUIRE_RIGHTS_MANIFEST === 'true';
+  const enforceStrict = requireAllFields || strictEnv;
+
+  const rawManifest = parseMaybeJson(payload.rights_manifest ?? payload.rightsManifest);
+  const rawAttr = parseMaybeJson(payload.attribution);
+  const videoId = String(rawManifest?.video_id || rawManifest?.videoId || payload.video_id || payload.videoId || '').trim();
+  const assetId = String(payload.asset_id || payload.assetId || rawManifest?.rights_id || '').trim();
+  const contentId = String(payload.content_id || payload.contentId || '').trim();
+
+  // Always enforce SSRF protection on external URLs even when LEGAL_OFFICER=false
+  const candidateUrl = payload.mediaUrl || payload.public_media_url || payload.media_url || '';
+  if (candidateUrl) {
+    const ssrfCheck = await assertSafeExternalUrl(candidateUrl);
+    if (!ssrfCheck.ok) return ssrfCheck;
+  }
+
+  const rawApproved = payload.approved_by_user ?? payload.approvedByUser;
+  const approvedBool = rawApproved === true || rawApproved === 'true';
+
+  if (!isLegalOfficerEnabled()) {
+    return {
+      ok: true,
+      legalOfficerBypass: true,
+      rightsManifest: rawManifest && typeof rawManifest === 'object' ? rawManifest : null,
+      attribution: rawAttr,
+      approvedByUser: approvedBool,
+      videoId,
+      assetId
+    };
+  }
+
+  if ((videoId && revokedAssetIds.has(videoId)) || (assetId && revokedAssetIds.has(assetId)) || (contentId && revokedAssetIds.has(contentId))) {
+    return { ok: false, status: 403, code: 'RIGHTS_REVOKED', message: 'Rights for this asset have been revoked.' };
+  }
+
+  if (rawApproved === false || rawApproved === 'false') {
+    return { ok: false, status: 403, code: 'HUMAN_APPROVAL_REQUIRED', message: 'Explicit human approval (approved_by_user=true) is required.' };
+  }
+
+  if (rawManifest && typeof rawManifest === 'object') {
+    const basis = String(rawManifest.basis || '').toUpperCase();
+    const status = String(rawManifest.status || '').toUpperCase();
+    if (basis === 'OPERATOR_ASSET') {
+      return { ok: false, status: 403, code: 'INVALID_RIGHTS_BASIS', message: 'OPERATOR_ASSET is forbidden from bypassing rights verification.' };
+    }
+    if (status !== 'VERIFIED') {
+      return { ok: false, status: 403, code: 'RIGHTS_NOT_VERIFIED', message: `Rights status '${status || 'UNKNOWN'}' is not VERIFIED.` };
+    }
+    if (!VALID_COMPLIANCE_BASES.has(basis)) {
+      return { ok: false, status: 403, code: 'INVALID_RIGHTS_BASIS', message: `Unsupported rights basis '${basis}'.` };
+    }
+    const evidence = String(rawManifest.proof_reference || rawManifest.license_url || rawManifest.licenseUrl || '').trim();
+    if (enforceStrict && !evidence) {
+      return { ok: false, status: 403, code: 'MISSING_EVIDENCE', message: 'Verified rights manifest requires proof_reference or license_url.' };
+    }
+  } else if (enforceStrict) {
+    return { ok: false, status: 403, code: 'MISSING_RIGHTS_MANIFEST', message: 'Rights manifest is required.' };
+  }
+
+  const attrText = typeof rawAttr === 'string' ? rawAttr.trim() : (rawAttr?.text || rawAttr?.creator_name || rawAttr?.source_url || '').trim();
+  if (enforceStrict && !attrText) {
+    return { ok: false, status: 403, code: 'MISSING_ATTRIBUTION', message: 'Attribution information is required.' };
+  }
+
+  return {
+    ok: true,
+    legalOfficerBypass: false,
+    rightsManifest: rawManifest && typeof rawManifest === 'object' ? rawManifest : null,
+    attribution: rawAttr,
+    approvedByUser: approvedBool,
+    videoId,
+    assetId
+  };
+}
+
+function isPostRightsRevoked(post) {
+  if (!post) return false;
+  const ids = [
+    post['Video ID'], post.video_id, post.videoId,
+    post['Asset ID'], post.asset_id, post.assetId,
+    post['Content ID'], post.content_id, post.contentId
+  ].map(v => String(v || '').trim()).filter(Boolean);
+  return ids.some(id => revokedAssetIds.has(id));
+}
+
+async function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}
+
+const optionalSingleUpload = (req, res, next) => {
+  const ctype = String(req.headers['content-type'] || '');
+  if (ctype.includes('multipart/form-data')) {
+    return upload.single('file')(req, res, next);
+  }
+  return next();
+};
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -1227,6 +1605,11 @@ app.get('/api/publish/status/:contentId', requireAutomation, async (req, res) =>
 // Single-click publish from card
 app.post('/api/posts/:contentId/publish', requireAutomation, async (req, res) => {
   try {
+    const posts = await db.getPosts();
+    const post = (posts || []).find(p => (p['Content ID'] || p.content_id) === req.params.contentId);
+    if (post && isPostRightsRevoked(post)) {
+      return res.status(403).json({ success: false, code: 'RIGHTS_REVOKED', message: 'Rights for this asset have been revoked.' });
+    }
     const result = await advanceCalendarEntry(req.params.contentId, 1);
     if (!result) {
       return res.status(404).json({ success: false, message: 'Post not found' });
@@ -1485,6 +1868,290 @@ app.use(async (err, req, res, next) => {
   return next(err);
 });
 
+// ---------------------------------------------------------------------------
+// OmniPost V2 Ingestion, Rights Revocation & Multi-Tenant Routing
+// ---------------------------------------------------------------------------
+app.post('/api/v2/ingest', requireAutomation, optionalSingleUpload, async (req, res) => {
+  const cleanupFiles = async () => {
+    const staged = [
+      ...(req.file ? [req.file] : []),
+      ...(req._stagedPaths || []),
+      ...(req._stagedFiles || [])
+    ];
+    if (staged.length > 0) {
+      await safeDiscardStaged(staged).catch(() => {});
+    }
+  };
+
+  try {
+    const rawBody = req.body || {};
+    const parsedEnvelope = parseMaybeJson(rawBody.payload);
+    const body = (parsedEnvelope && typeof parsedEnvelope === 'object')
+      ? { ...rawBody, ...parsedEnvelope }
+      : rawBody;
+    const idemKey = String(req.headers['x-idempotency-key'] || body.idempotency_key || body.idempotencyKey || '').trim();
+
+    if (body.file_path || body.local_path) {
+      await cleanupFiles();
+      return res.status(400).json({
+        success: false,
+        code: 'UNSAFE_PATH_PARAMETER',
+        message: 'Arbitrary server file_path / local_path references are rejected.'
+      });
+    }
+
+    const compliance = await validateCompliancePayload(body, { requireAllFields: true });
+    if (!compliance.ok) {
+      await cleanupFiles();
+      return res.status(compliance.status).json({
+        success: false,
+        code: compliance.code,
+        message: compliance.message
+      });
+    }
+
+    const tenantId = String(body.tenant_id || body.tenantId || body.source?.tenant_id || req.headers['x-tenant-id'] || '').trim();
+    const workspaceId = String(body.workspace_id || body.workspaceId || body.omnipost_routing?.workspace_id || body.publishing?.workspace_id || req.headers['x-workspace-id'] || '').trim();
+    if (tenantId || workspaceId) {
+      const tenantCheck = verifyTenantWorkspace(tenantId, workspaceId);
+      if (!tenantCheck.ok) {
+        await cleanupFiles();
+        return res.status(tenantCheck.status || 403).json({
+          success: false,
+          code: tenantCheck.code || 'CROSS_TENANT_WORKSPACE_FORBIDDEN',
+          message: tenantCheck.message
+        });
+      }
+    }
+
+    if (idemKey && ingestIdempotencyCache.has(idemKey)) {
+      const prior = ingestIdempotencyCache.get(idemKey);
+      if (isPostRightsRevoked({ 'Video ID': prior.videoId, 'Asset ID': prior.assetId, 'Content ID': prior.contentId })) {
+        await cleanupFiles();
+        return res.status(403).json({
+          success: false,
+          code: 'RIGHTS_REVOKED',
+          message: 'Previously ingested asset has since had its rights revoked.'
+        });
+      }
+      await cleanupFiles();
+      return res.status(200).json({ ...prior, deduplicated: true });
+    }
+
+    const assetManifest = parseMaybeJson(body.asset_manifest ?? body.assetManifest) || {};
+    const expectedHash = String(
+      body.expected_sha256 || body.file_hash || assetManifest.file_hash || body.media?.checksum || ''
+    ).trim().toLowerCase();
+    let computedSha256 = '';
+    let storedMediaUrl = String(body.mediaUrl || body.public_media_url || body.media_url || '').trim();
+
+    if (req.file) {
+      computedSha256 = await sha256File(req.file.path);
+      if (expectedHash && expectedHash !== computedSha256) {
+        await cleanupFiles();
+        return res.status(422).json({
+          success: false,
+          code: 'CHECKSUM_MISMATCH',
+          message: `Uploaded file SHA-256 (${computedSha256}) does not match expected hash (${expectedHash}).`
+        });
+      }
+      const rawName = path.basename(req.file.originalname || `ingest_${Date.now()}.mp4`).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const safeName = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}_${rawName}`;
+      const destPath = path.resolve(MEDIA_UPLOADS_DIR, safeName);
+      const rel = path.relative(MEDIA_UPLOADS_DIR, destPath);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        await cleanupFiles();
+        return res.status(403).json({ success: false, code: 'PATH_TRAVERSAL_BLOCKED', message: 'Invalid filename path.' });
+      }
+      if (!fs.existsSync(MEDIA_UPLOADS_DIR)) fs.mkdirSync(MEDIA_UPLOADS_DIR, { recursive: true });
+      await fs.promises.copyFile(req.file.path, destPath);
+      await cleanupFiles();
+      if (!storedMediaUrl) {
+        storedMediaUrl = `/uploads/media/${safeName}`;
+      }
+    }
+
+    const rawPlatforms = parseMaybeJson(body.platforms ?? body.publishing?.destinations);
+    const requestedPlatforms = Array.isArray(rawPlatforms) && rawPlatforms.length > 0
+      ? rawPlatforms
+      : (typeof rawPlatforms === 'string' && rawPlatforms.trim() ? rawPlatforms.split(',').map(s => s.trim()) : ['youtube']);
+
+    const resolvedAccounts = resolveTenantAccounts(tenantId, workspaceId, requestedPlatforms);
+    const platformsToValidate = resolvedAccounts.canonicalPlatforms ? resolvedAccounts.canonicalPlatforms.filter(p => registry.ALL_PLATFORMS.includes(p)) : requestedPlatforms;
+    const finalPlatformsList = platformsToValidate.length > 0 ? platformsToValidate : ['youtube'];
+
+    const check = registry.validatePlatforms(finalPlatformsList);
+    if (!check.valid) {
+      await cleanupFiles();
+      return res.status(400).json({ success: false, code: 'INVALID_PLATFORMS', message: check.error });
+    }
+
+    const publishNow = body.publishNow === true || body.publishNow === 'true';
+    const contentId = 'V2-' + crypto.randomUUID().slice(0, 10);
+    const attrObj = compliance.attribution;
+    const attrSummary = typeof attrObj === 'string' ? attrObj : (attrObj?.text || attrObj?.creator_name || attrObj?.source_url || '');
+    const title = String(body.title || body.content?.title || assetManifest.title || `Verified Clip ${compliance.videoId || contentId}`).trim();
+    const caption = String(body.caption || body.content?.description || attrSummary).trim();
+    const resolvedMediaType = String(body.mediaType || body.media_type || (req.file ? detectMediaType(req.file) : 'video'));
+
+    const resolvedRightsStatus = compliance.legalOfficerBypass
+      ? (String(compliance.rightsManifest?.status || '').toUpperCase() || 'UNVERIFIED_BYPASS')
+      : 'VERIFIED';
+
+    const postRecord = {
+      'Content ID': contentId,
+      'content_id': contentId,
+      'Video ID': compliance.videoId || '',
+      'video_id': compliance.videoId || '',
+      'Asset ID': compliance.assetId || '',
+      'asset_id': compliance.assetId || '',
+      'Title': title,
+      'Caption': caption,
+      'Platforms': check.platforms.join(','),
+      'Scheduled DateTime': body.scheduledDateTime || new Date().toISOString(),
+      'Status': publishNow ? 'Approved for Posting' : 'Pending Review',
+      'Public Media URL': storedMediaUrl,
+      'public_media_url': storedMediaUrl,
+      'Media Type': resolvedMediaType,
+      'media_type': resolvedMediaType,
+      'Rights Status': resolvedRightsStatus,
+      'Rights Basis': String(compliance.rightsManifest?.basis || '').toUpperCase(),
+      'Attribution': attrSummary,
+      'Content Hash': computedSha256 || expectedHash,
+      'Idempotency Key': idemKey,
+      'Tenant ID': tenantId || 'default',
+      'Workspace ID': workspaceId || 'default-workspace',
+      'Ingest Source': 'v2'
+    };
+
+    await db.savePost(postRecord);
+
+    let publishResult = null;
+    if (publishNow) {
+      publishResult = await advanceCalendarEntry(contentId, 1);
+    }
+
+    const finalStatus = publishResult?.rollup || postRecord.Status;
+    const eventType = publishNow
+      ? (finalStatus === 'Posted' || finalStatus === 'Partially Posted' ? 'POST_PUBLISHED' : 'POST_FAILED')
+      : 'POST_SCHEDULED';
+
+    dispatchSignedWebhook({
+      eventType,
+      tenantId: tenantId || 'default',
+      workspaceId: workspaceId || 'default-workspace',
+      projectId: body.project_id || body.projectId || compliance.videoId,
+      jobId: body.job_id || body.jobId || body.source?.job_id,
+      contentId,
+      idempotencyKey: idemKey,
+      status: finalStatus,
+      platforms: check.platforms,
+      error: finalStatus === 'Failed' ? 'One or more channels failed during dispatch.' : null
+    }).catch(() => {});
+
+    const responseBody = {
+      success: true,
+      contentId,
+      videoId: compliance.videoId,
+      assetId: compliance.assetId,
+      status: finalStatus,
+      rightsStatus: resolvedRightsStatus,
+      legalOfficer: isLegalOfficerEnabled(),
+      sha256: computedSha256 || expectedHash || null,
+      idempotencyKey: idemKey || null,
+      mediaUrl: storedMediaUrl || null
+    };
+    if (idemKey) {
+      ingestIdempotencyCache.set(idemKey, responseBody);
+    }
+    return res.status(201).json(responseBody);
+  } catch (err) {
+    await cleanupFiles();
+    console.error('[API v2 Ingest] Error:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/v2/rights/revoke', requireAutomation, async (req, res) => {
+  try {
+    const { video_id, videoId, asset_id, assetId, content_id, contentId, reason } = req.body || {};
+    const targetIds = [video_id, videoId, asset_id, assetId, content_id, contentId]
+      .map(v => String(v || '').trim())
+      .filter(Boolean);
+    if (targetIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one video_id, asset_id, or content_id is required.' });
+    }
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ success: false, message: 'Revocation reason is required.' });
+    }
+    targetIds.forEach(id => revokedAssetIds.add(id));
+
+    const posts = await db.getPosts();
+    let affectedPosts = 0;
+    for (const p of posts) {
+      const pIds = [p['Content ID'], p.content_id, p['Video ID'], p.video_id, p['Asset ID'], p.asset_id]
+        .map(v => String(v || '').trim())
+        .filter(Boolean);
+      if (pIds.some(id => revokedAssetIds.has(id))) {
+        p['Status'] = 'Rights Revoked';
+        p['Rights Status'] = 'REVOKED';
+        p['Revocation Reason'] = String(reason).trim();
+        await db.savePost(p);
+        affectedPosts += 1;
+      }
+    }
+
+    for (const tid of targetIds) {
+      dispatchSignedWebhook({
+        eventType: 'TAKEDOWN_ISSUED',
+        tenantId: 'default',
+        workspaceId: 'default-workspace',
+        projectId: tid,
+        jobId: tid,
+        contentId: tid,
+        status: 'REVOKED',
+        error: `Takedown issued: ${reason}`
+      }).catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      revoked: true,
+      targetIds,
+      affectedPosts,
+      revokedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/v2/health/ops', requireAutomation, async (req, res) => {
+  try {
+    const storage = db.getBackendStatus();
+    const posts = await db.getPosts();
+    let stagedCount = 0;
+    try {
+      if (fs.existsSync(STAGING_DIR)) {
+        stagedCount = fs.readdirSync(STAGING_DIR).length;
+      }
+    } catch {
+      stagedCount = 0;
+    }
+    return res.json({
+      status: 'ok',
+      legalOfficer: isLegalOfficerEnabled(),
+      storage,
+      postsCount: posts.length,
+      revokedCount: revokedAssetIds.size,
+      stagedUploadsCount: stagedCount,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    return res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 const isTestRunner = Boolean(process.env.NODE_TEST_CONTEXT || (process.argv[1] && process.argv[1].includes('test')));
 let server = null;
 
@@ -1510,4 +2177,4 @@ if (!isTestRunner) {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-export { app, server, STAGING_DIR };
+export { app, server, STAGING_DIR, revokedAssetIds, isLegalOfficerEnabled, verifyTenantWorkspace, resolveTenantAccounts, dispatchSignedWebhook };

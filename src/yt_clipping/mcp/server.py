@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from ..ingestion.asset_provider import extract_youtube_video_id, LocalAssetProvider
 from ..rights.gate import LocalRightsPolicy
-from ..discovery.attribution_engine import AttributionEngine, CreatorPolicy
+from ..discovery.attribution_engine import AttributionEngine, CreatorPolicy, SAFE_CREATOR_POLICIES
 from ..discovery.heatmap import HeatmapAnalyzer
 from ..discovery.channel_watcher import resolve_channel_identifier
 from ..discovery.pinger_daemon import PingerDaemon
@@ -476,7 +476,7 @@ class MCPServer:
         attribution_eng = AttributionEngine(db_path=self.db_path)
         creator_policy = attribution_eng.get_creator_policy(channel_id=manifest.owner_name or video_id)
 
-        is_safe = can_process or (policy_type == "creator" and creator_policy != CreatorPolicy.STRICT_COPYRIGHT)
+        is_safe = bool(can_process) or (policy_type == "creator" and creator_policy in SAFE_CREATOR_POLICIES)
 
         payload = {
             "status": "success",

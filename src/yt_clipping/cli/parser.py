@@ -19,6 +19,8 @@ from .commands import (
     cmd_config_validate,
     cmd_rights_register,
     cmd_rights_check,
+    cmd_rights_revoke,
+    cmd_rights_audit,
     cmd_ingest,
     cmd_quota,
     cmd_tts,
@@ -126,7 +128,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_r_reg = rights_sub.add_parser("register", help="Register verified rights for a video")
     p_r_reg.add_argument("--video-id", required=True, help="YouTube Video ID")
-    p_r_reg.add_argument("--basis", required=True, choices=["OWNED", "EXPLICIT_PERMISSION", "CREATIVE_COMMONS", "OPERATOR_ASSET"])
+    p_r_reg.add_argument(
+        "--basis",
+        required=True,
+        choices=["OWNED", "EXPLICIT_PERMISSION", "CREATIVE_COMMONS", "VERIFIED_LICENSE", "COMMENTARY_TRANSFORM"],
+    )
     p_r_reg.add_argument("--owner", required=True, help="Content owner or creator name")
     p_r_reg.add_argument("--license-url", default="", help="License documentation URL")
     p_r_reg.add_argument("--proof", default="", help="Proof reference / agreement ID")
@@ -139,6 +145,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_r_chk.add_argument("--video-id", required=True, help="YouTube Video ID")
     p_r_chk.add_argument("--ledger", default="data/rights_ledger.json", help="Path to rights ledger")
     p_r_chk.set_defaults(func=cmd_rights_check)
+
+    p_r_rev = rights_sub.add_parser("revoke", help="Revoke rights for a video and cancel pending jobs")
+    p_r_rev.add_argument("--video-id", required=True, help="YouTube Video ID")
+    p_r_rev.add_argument("--reason", required=True, help="Mandatory revocation rationale")
+    p_r_rev.add_argument("--actor", default="cli_operator", help="Operator identity")
+    p_r_rev.add_argument("--ledger", default="data/rights_ledger.json", help="Path to rights ledger")
+    p_r_rev.add_argument("--db", default="data/jobs.db", help="Path to SQLite database")
+    p_r_rev.set_defaults(func=cmd_rights_revoke)
+
+    p_r_aud = rights_sub.add_parser("audit", help="Display immutable rights audit history")
+    p_r_aud.add_argument("--video-id", default=None, help="Optional filter by Video ID")
+    p_r_aud.add_argument("--ledger", default="data/rights_ledger.json", help="Path to rights ledger")
+    p_r_aud.add_argument("--db", default="data/jobs.db", help="Path to SQLite database")
+    p_r_aud.set_defaults(func=cmd_rights_audit)
 
     # Autoprobe command (Unified end-to-end channel scan, virality evaluation, and clipping)
     p_auto = subparsers.add_parser("autoprobe", help="Autonomous end-to-end channel scan, virality evaluation, and clipping")

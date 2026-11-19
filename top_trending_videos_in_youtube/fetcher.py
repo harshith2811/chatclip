@@ -5,8 +5,8 @@ enforces strict subscriber verification (>= 10M), filters for long-form clipping
 and exports clean structured lists for streaming into the clipping pipeline.
 """
 
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Optional, Any
+from dataclasses import dataclass, asdict, field
+from typing import List, Dict, Optional, Any, Tuple
 import os
 import json
 import re
@@ -55,6 +55,15 @@ class QualityTrendingVideo:
     thumbnail_url: str
     virality_score: float
     clipping_suitability: str
+    license_status: str = "standard_youtube"
+    embeddable: bool = True
+    privacy_status: str = "public"
+    made_for_kids: bool = False
+    category_id: str = ""
+    region_restricted: bool = False
+    compliance_bucket: str = "standard_youtube"
+    risk_flags: List[str] = field(default_factory=list)
+    review_required: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -78,7 +87,7 @@ class TopTrending10MFetcher:
         for i in range(0, len(video_ids), 50):
             chunk = video_ids[i:i + 50]
             ids_str = ",".join(chunk)
-            url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id={ids_str}&key={self.api_key}"
+            url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics,status&id={ids_str}&key={self.api_key}"
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "Antigravity-10MFetcher/1.0"})
                 with urllib.request.urlopen(req, timeout=10) as resp:
@@ -104,7 +113,7 @@ class TopTrending10MFetcher:
         try:
             url = (
                 f"https://www.googleapis.com/youtube/v3/videos"
-                f"?part=snippet,contentDetails,statistics&chart=mostPopular&regionCode={region_code}"
+                f"?part=snippet,contentDetails,statistics,status&chart=mostPopular&regionCode={region_code}"
                 f"&maxResults=50&key={self.api_key}"
             )
             req = urllib.request.Request(url, headers={"User-Agent": "Antigravity-10MFetcher/1.0"})
@@ -128,6 +137,7 @@ class TopTrending10MFetcher:
                 sn = item.get("snippet", {})
                 cd = item.get("contentDetails", {})
                 st = item.get("statistics", {})
+                st_status = item.get("status", {})
 
                 vid = item.get("id", "")
                 dur_sec = parse_duration_to_seconds(cd.get("duration", ""))
@@ -152,6 +162,17 @@ class TopTrending10MFetcher:
                     or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
                 )
 
+                lic = str(st_status.get("license", "youtube"))
+                embeddable = bool(st_status.get("embeddable", True))
+                privacy_status = str(st_status.get("privacyStatus", "public"))
+                made_for_kids = bool(st_status.get("madeForKids", False))
+                cat_id = str(sn.get("categoryId", ""))
+                reg_rest = cd.get("regionRestriction", {}) or {}
+                cls_res = self._classify_item(
+                    vid, sn.get("title", ""), ch_info.channel_id, ch_info.title,
+                    lic, embeddable, privacy_status, made_for_kids, cat_id, reg_rest,
+                )
+
                 results.append(
                     QualityTrendingVideo(
                         video_id=vid,
@@ -171,6 +192,15 @@ class TopTrending10MFetcher:
                         thumbnail_url=thumb,
                         virality_score=virality,
                         clipping_suitability=self._assess_suitability(dur_sec, virality),
+                        license_status=lic,
+                        embeddable=embeddable,
+                        privacy_status=privacy_status,
+                        made_for_kids=made_for_kids,
+                        category_id=cat_id,
+                        region_restricted=bool(reg_rest.get("blocked") or reg_rest.get("allowed")),
+                        compliance_bucket=cls_res["compliance_bucket"],
+                        risk_flags=cls_res["risk_flags"],
+                        review_required=cls_res["review_required"],
                     )
                 )
 
@@ -190,24 +220,35 @@ class TopTrending10MFetcher:
         all_video_ids: List[str] = []
         video_channel_map: Dict[str, ChannelInfo] = {}
 
-        # Fetch recent video IDs from each channel's uploads playlist
-        for ch in VERIFIED_10M_CHANNELS:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _fetch_channel_uploads(ch: ChannelInfo) -> List[Tuple[str, ChannelInfo]]:
             url = (
                 f"https://www.googleapis.com/youtube/v3/playlistItems"
                 f"?part=snippet&playlistId={ch.uploads_playlist_id}&maxResults={per_channel_limit}&key={self.api_key}"
             )
+            vids: List[Tuple[str, ChannelInfo]] = []
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "Antigravity-10MFetcher/1.0"})
-                with urllib.request.urlopen(req, timeout=8) as resp:
+                with urllib.request.urlopen(req, timeout=6) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-
                 for item in data.get("items", []):
                     vid = item.get("snippet", {}).get("resourceId", {}).get("videoId")
                     if vid:
+                        vids.append((vid, ch))
+            except Exception:
+                pass
+            return vids
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(_fetch_channel_uploads, ch) for ch in VERIFIED_10M_CHANNELS]
+            for fut in as_completed(futures):
+                try:
+                    for vid, ch in fut.result():
                         all_video_ids.append(vid)
                         video_channel_map[vid] = ch
-            except Exception:
-                continue
+                except Exception:
+                    pass
 
         # Batch fetch statistics and durations
         details = self._fetch_video_details_batch(all_video_ids)
@@ -221,6 +262,7 @@ class TopTrending10MFetcher:
             sn = item.get("snippet", {})
             cd = item.get("contentDetails", {})
             st = item.get("statistics", {})
+            st_status = item.get("status", {})
 
             dur_sec = parse_duration_to_seconds(cd.get("duration", ""))
             # Ideal clipping duration: between 3 mins and 60 mins
@@ -243,6 +285,17 @@ class TopTrending10MFetcher:
                 or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
             )
 
+            lic = str(st_status.get("license", "youtube"))
+            embeddable = bool(st_status.get("embeddable", True))
+            privacy_status = str(st_status.get("privacyStatus", "public"))
+            made_for_kids = bool(st_status.get("madeForKids", False))
+            cat_id = str(sn.get("categoryId", ""))
+            reg_rest = cd.get("regionRestriction", {}) or {}
+            cls_res = self._classify_item(
+                vid, sn.get("title", ""), ch.channel_id, ch.title,
+                lic, embeddable, privacy_status, made_for_kids, cat_id, reg_rest,
+            )
+
             results.append(
                 QualityTrendingVideo(
                     video_id=vid,
@@ -262,16 +315,69 @@ class TopTrending10MFetcher:
                     thumbnail_url=thumb,
                     virality_score=virality,
                     clipping_suitability=self._assess_suitability(dur_sec, virality),
+                    license_status=lic,
+                    embeddable=embeddable,
+                    privacy_status=privacy_status,
+                    made_for_kids=made_for_kids,
+                    category_id=cat_id,
+                    region_restricted=bool(reg_rest.get("blocked") or reg_rest.get("allowed")),
+                    compliance_bucket=cls_res["compliance_bucket"],
+                    risk_flags=cls_res["risk_flags"],
+                    review_required=cls_res["review_required"],
                 )
             )
 
         results.sort(key=lambda v: (v.virality_score, v.view_count), reverse=True)
         return results
 
-    def get_top_trending_10m_list(self, limit: int = 15) -> List[QualityTrendingVideo]:
+    @staticmethod
+    def _classify_item(
+        video_id: str,
+        title: str,
+        channel_id: str,
+        channel_name: str,
+        license_status: str,
+        embeddable: bool,
+        privacy_status: str,
+        made_for_kids: bool,
+        category_id: str,
+        region_restriction: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        try:
+            from yt_clipping.discovery.risk_classifier import RiskClassificationRegistry
+            from yt_clipping.discovery.attribution_engine import AttributionEngine
+            creator_pol = AttributionEngine().get_creator_policy(channel_id).value
+            res = RiskClassificationRegistry().classify_source(
+                video_id=video_id,
+                title=title,
+                channel_id=channel_id,
+                channel_name=channel_name,
+                license_status=license_status,
+                embeddable=embeddable,
+                privacy_status=privacy_status,
+                made_for_kids=made_for_kids,
+                category_id=category_id,
+                region_restriction=region_restriction,
+                creator_policy=creator_pol,
+            )
+            return {
+                "compliance_bucket": res.compliance_bucket,
+                "risk_flags": res.risk_flags,
+                "review_required": res.review_required,
+            }
+        except Exception:
+            bucket = "creative_commons_only" if license_status == "creativeCommon" else ("restricted" if not embeddable else "standard_youtube")
+            return {"compliance_bucket": bucket, "risk_flags": [], "review_required": True}
+
+    def get_top_trending_10m_list(
+        self,
+        limit: int = 15,
+        filter_mode: Optional[str] = None,
+    ) -> List[QualityTrendingVideo]:
         """
         Combines trending chart discoveries and curated 10M+ uploads,
-        deduplicating and ranking by clipping quality and virality.
+        deduplicating, classifying license/risk buckets, and filtering optionally
+        by compliance bucket (`creative_commons_only`, `approved_creators`, `owned`, etc.).
         """
         chart_videos = self.fetch_from_popular_chart(limit=limit)
         curated_videos = self.fetch_from_curated_10m_creators(per_channel_limit=2)
@@ -287,6 +393,9 @@ class TopTrending10MFetcher:
 
         if not combined:
             combined = self._get_fallback_10m_videos()
+
+        if filter_mode:
+            combined = [v for v in combined if v.compliance_bucket == filter_mode]
 
         combined.sort(key=lambda v: v.virality_score, reverse=True)
         return combined[:limit]
@@ -335,6 +444,26 @@ class TopTrending10MFetcher:
     def _get_fallback_10m_videos(self) -> List[QualityTrendingVideo]:
         """Provides high-quality pre-verified fallback videos from 10M+ channels for offline reliability."""
         return [
+            QualityTrendingVideo(
+                video_id="QdBZY2fkU-0",
+                url="https://www.youtube.com/watch?v=QdBZY2fkU-0",
+                title="Grand Theft Auto VI Trailer 1",
+                channel_name="Rockstar Games",
+                channel_id="UCCl0mcuw9-jGgG1fA29x96A",
+                channel_handle="@RockstarGames",
+                channel_subscribers=11_400_000,
+                channel_subscribers_formatted="11.4M",
+                published_at="2023-12-04T23:08:44Z",
+                duration_seconds=91.0,
+                duration_formatted="1:31",
+                view_count=304_553_515,
+                like_count=11_450_000,
+                comment_count=1_120_000,
+                thumbnail_url="https://i.ytimg.com/vi/QdBZY2fkU-0/maxresdefault.jpg",
+                virality_score=99.9,
+                clipping_suitability="Tier-1 Mega Viral Record (GTA 6 Global Premiere)",
+                category_id="20",
+            ),
             QualityTrendingVideo(
                 video_id="0e3GPea1Tyg",
                 url="https://www.youtube.com/watch?v=0e3GPea1Tyg",

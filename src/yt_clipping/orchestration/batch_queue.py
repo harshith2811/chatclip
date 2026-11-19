@@ -17,6 +17,8 @@ import threading
 import uuid
 import os
 import time
+from ..utils.file_ops import atomic_replace, safe_remove
+from .resource_manager import get_resource_manager
 
 logger = logging.getLogger(__name__)
 
@@ -112,10 +114,22 @@ class BatchQueueManager:
 
         self._init_db()
 
+    def _get_connection(self) -> sqlite3.Connection:
+        """Returns SQLite connection with WAL mode and resilient busy timeout."""
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+        except Exception:
+            pass
+        return conn
+
     def _init_db(self) -> None:
         """Initializes batch_sessions and batch_items tables."""
+        conn = None
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            conn = self._get_connection()
+            with conn:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS batch_sessions (
                         batch_id TEXT PRIMARY KEY,
@@ -136,9 +150,19 @@ class BatchQueueManager:
                         items_json TEXT
                     )
                 """)
-                conn.commit()
+                # Reconcile stale batches left running before restart
+                conn.execute(
+                    "UPDATE batch_sessions SET status = 'cancelled', completed_at = ? WHERE status = 'running'",
+                    (datetime.now(timezone.utc).isoformat(),)
+                )
         except Exception as e:
             logger.warning(f"BatchQueueManager DB initialization warning: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def create_batch(
         self,
@@ -197,8 +221,10 @@ class BatchQueueManager:
         data = session.to_dict()
 
         # 1. Update SQLite
+        conn = None
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            conn = self._get_connection()
+            with conn:
                 conn.execute("""
                     INSERT OR REPLACE INTO batch_sessions (
                         batch_id, name, status, created_at, started_at, completed_at,
@@ -224,11 +250,17 @@ class BatchQueueManager:
                     json.dumps(session.render_config),
                     json.dumps(data.get("items", [])),
                 ))
-                conn.commit()
         except Exception as e:
             logger.warning(f"Error persisting batch session to DB: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
-        # 2. Update JSON cache
+        # 2. Update JSON cache atomically
+        tmp_json = f"{self.json_path}.tmp"
         try:
             all_sessions: Dict[str, Any] = {}
             if os.path.exists(self.json_path):
@@ -238,23 +270,32 @@ class BatchQueueManager:
                 except Exception:
                     all_sessions = {}
             all_sessions[session.batch_id] = data
-            with open(self.json_path, "w", encoding="utf-8") as f:
+            with open(tmp_json, "w", encoding="utf-8") as f:
                 json.dump(all_sessions, f, indent=2)
+            atomic_replace(tmp_json, self.json_path)
         except Exception as e:
+            safe_remove(tmp_json)
             logger.warning(f"Error persisting batch session to JSON: {e}")
 
     def get_batch(self, batch_id: str) -> Optional[BatchSession]:
         """Loads batch session by ID."""
+        conn = None
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM batch_sessions WHERE batch_id = ?", (batch_id,))
-                row = cursor.fetchone()
-                if row:
-                    return self._row_to_session(dict(row))
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM batch_sessions WHERE batch_id = ?", (batch_id,))
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_session(dict(row))
         except Exception as e:
             logger.warning(f"Error loading batch from DB: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
         # Fallback to JSON
         if os.path.exists(self.json_path):
@@ -268,35 +309,60 @@ class BatchQueueManager:
         return None
 
     def get_active_batch(self) -> Optional[BatchSession]:
-        """Returns the currently active RUNNING batch session, if any."""
+        """Returns the currently active RUNNING batch session, if any and thread is alive."""
+        conn = None
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT * FROM batch_sessions WHERE status = 'running' ORDER BY created_at DESC LIMIT 1"
-                )
-                row = cursor.fetchone()
-                if row:
-                    return self._row_to_session(dict(row))
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM batch_sessions WHERE status = 'running' ORDER BY created_at DESC LIMIT 1"
+            )
+            row = cursor.fetchone()
+            if row:
+                session = self._row_to_session(dict(row))
+                worker = self._active_worker_threads.get(session.batch_id)
+                if worker and worker.is_alive():
+                    return session
+                else:
+                    # Thread died or server restarted, mark cancelled
+                    cursor.execute(
+                        "UPDATE batch_sessions SET status = 'cancelled', completed_at = ? WHERE batch_id = ?",
+                        (datetime.now(timezone.utc).isoformat(), session.batch_id)
+                    )
+                    conn.commit()
+                    return None
         except Exception:
             pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         return None
 
     def list_batches(self, limit: int = 10) -> List[BatchSession]:
         """Returns list of recent batch sessions."""
         sessions: List[BatchSession] = []
+        conn = None
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT * FROM batch_sessions ORDER BY created_at DESC LIMIT ?", (limit,)
-                )
-                for row in cursor.fetchall():
-                    sessions.append(self._row_to_session(dict(row)))
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM batch_sessions ORDER BY created_at DESC LIMIT ?", (limit,)
+            )
+            for row in cursor.fetchall():
+                sessions.append(self._row_to_session(dict(row)))
         except Exception:
             pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
         return sessions
 
     def cancel_batch(self, batch_id: str) -> bool:
@@ -360,8 +426,13 @@ class BatchQueueManager:
                     self._save_session(session)
 
                 try:
-                    # Execute full clipping + rendering for this video
-                    rendered_clips = render_function(item.video_id, session.render_config, progress_cb)
+                    # Execute full clipping + rendering for this video under managed resource governor slot
+                    rm = get_resource_manager()
+                    with rm.acquire_gpu_slot(f"batch_{batch_id}_{item.video_id}"):
+                        if self.is_cancelled(batch_id):
+                            item.status = BatchItemStatus.SKIPPED
+                            continue
+                        rendered_clips = render_function(item.video_id, session.render_config, progress_cb)
                     item.status = BatchItemStatus.COMPLETED
                     item.clips_count = len(rendered_clips)
                     item.completed_at = datetime.now(timezone.utc).isoformat()

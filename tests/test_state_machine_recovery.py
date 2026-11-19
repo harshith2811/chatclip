@@ -66,7 +66,12 @@ def test_stage_resumption_invalidation_on_missing_artifact(tmp_path):
     missing_file = str(tmp_path / "nonexistent_clip.mp4")
     from src.yt_clipping.contracts.models import RightsManifest, RightsBasis, RightsStatus
     manifest = RightsManifest(
-        rights_id="r1", video_id="vid_resume", basis=RightsBasis.OPERATOR_ASSET, status=RightsStatus.VERIFIED, owner_name="Owner"
+        rights_id="r1",
+        video_id="vid_resume",
+        basis=RightsBasis.OWNED,
+        status=RightsStatus.VERIFIED,
+        owner_name="Owner",
+        proof_reference="test-fixture-owned",
     )
     job = ClipJob(
         job_id="job_resume_test",

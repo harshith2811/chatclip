@@ -17,6 +17,40 @@ from datetime import datetime, timezone
 
 from ..contracts.models import RightsManifest
 from ..contracts.interfaces import AssetProvider, RightsPolicyViolationError
+from ..config import is_legal_officer_enabled
+
+
+VALID_MEDIA_EXTENSIONS = (".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi")
+EXCLUDED_ARTIFACT_SUFFIXES = (
+    ".part",
+    ".ytdl",
+    ".tmp",
+    ".json",
+    ".vtt",
+    ".srt",
+    ".ass",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".download_manifest.json",
+)
+
+
+def is_valid_media_file(file_path: str) -> bool:
+    """Verifies that a file is an actual video media file rather than an artifact or partial download."""
+    if not os.path.isfile(file_path):
+        return False
+    lower = file_path.lower()
+    if any(lower.endswith(sfx) for sfx in EXCLUDED_ARTIFACT_SUFFIXES):
+        return False
+    _, ext = os.path.splitext(lower)
+    if ext not in VALID_MEDIA_EXTENSIONS:
+        return False
+    try:
+        return os.path.getsize(file_path) > 1024
+    except OSError:
+        return False
 
 
 class MediaProbeError(RuntimeError):
@@ -95,7 +129,7 @@ class LocalAssetProvider(AssetProvider):
         """
         Resolves asset filepath. Raises RightsPolicyViolationError if rights are not VERIFIED.
         """
-        if not rights_manifest.is_valid():
+        if is_legal_officer_enabled() and not rights_manifest.is_valid():
             raise RightsPolicyViolationError(
                 f"Cannot resolve asset for video '{video_id}': Rights status is '{rights_manifest.status.value}'. "
                 f"Basis: '{rights_manifest.basis.value}'. Unauthorized access is prohibited."
@@ -127,7 +161,7 @@ class LocalAssetProvider(AssetProvider):
         Ingests media from authorized YouTube sources using yt-dlp.
         Enforces verified rights before any network download.
         """
-        if not rights_manifest.is_valid():
+        if is_legal_officer_enabled() and not rights_manifest.is_valid():
             raise RightsPolicyViolationError(
                 f"Rights verification failed for '{video_url_or_id}'. "
                 f"Status: {rights_manifest.status.value}. Download blocked."
@@ -171,18 +205,23 @@ class LocalAssetProvider(AssetProvider):
                 # Adjust extension if converted to mp4
                 base_name = os.path.splitext(downloaded_file)[0]
                 expected_target = f"{base_name}.{target_format}"
-                if os.path.exists(expected_target):
+                if os.path.exists(expected_target) and is_valid_media_file(expected_target):
                     final_path = expected_target
-                elif os.path.exists(downloaded_file):
+                elif os.path.exists(downloaded_file) and is_valid_media_file(downloaded_file):
                     final_path = downloaded_file
                 else:
-                    # Look for file matching video_id in storage_dir
+                    # Look for file matching video_id in storage_dir with a valid media extension
+                    matched_file = None
                     for f in os.listdir(self.storage_dir):
                         if f.startswith(video_id):
-                            final_path = os.path.join(self.storage_dir, f)
-                            break
+                            cand_path = os.path.join(self.storage_dir, f)
+                            if is_valid_media_file(cand_path):
+                                matched_file = cand_path
+                                break
+                    if matched_file:
+                        final_path = matched_file
                     else:
-                        raise AssetIngestionError(f"Downloaded file for '{video_id}' could not be located on disk.")
+                        raise AssetIngestionError(f"Downloaded media file for '{video_id}' could not be located on disk.")
 
         except yt_dlp.utils.DownloadError as de:
             raise AssetIngestionError(f"yt-dlp download failed for video '{video_id}': {de}")

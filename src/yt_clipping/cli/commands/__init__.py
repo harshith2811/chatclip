@@ -9,6 +9,8 @@ from .diagnostics import cmd_doctor, cmd_autoprobe, cmd_config_validate
 from .assets import (
     cmd_rights_register,
     cmd_rights_check,
+    cmd_rights_revoke,
+    cmd_rights_audit,
     cmd_ingest,
     cmd_quota,
     cmd_tts,
@@ -37,6 +39,8 @@ __all__ = [
     "cmd_config_validate",
     "cmd_rights_register",
     "cmd_rights_check",
+    "cmd_rights_revoke",
+    "cmd_rights_audit",
     "cmd_ingest",
     "cmd_quota",
     "cmd_tts",

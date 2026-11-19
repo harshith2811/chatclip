@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <title>Documentation Hub • YouTube Clipping Intelligence & OmniPost</title>
+  <meta name="description" content="Technical documentation, architecture guides, multi-tenant AI pipelines, CLI references, and API specifications.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    :root {
+      --bg-root: #ffffff;
+      --bg-sidebar: #f8fafc;
+      --bg-card: #ffffff;
+      --bg-muted: #f1f5f9;
+      --bg-code: #0f172a;
+      --text-main: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #64748b;
+      --text-subtle: #94a3b8;
+      --border: #e2e8f0;
+      --border-focus: #2563eb;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-light: rgba(37, 99, 235, 0.08);
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: var(--bg-root);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top Navigation Header */
+    .doc-header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      height: 60px;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 1.5rem;
+    }
+
+    .doc-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: var(--text-main);
+      font-weight: 700;
+      font-size: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .doc-brand-icon {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #2563eb, #4f46e5);
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+
+    .doc-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      background: var(--bg-muted);
+      color: var(--text-secondary);
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+    }
+
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .header-link-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 0.85rem;
+      font-size: 0.825rem;
+      font-weight: 500;
+      text-decoration: none;
+      color: var(--text-secondary);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #fff;
+      transition: all 0.15s ease;
+    }
+    .header-link-btn:hover {
+      color: var(--text-main);
+      border-color: #cbd5e1;
+      background: var(--bg-muted);
+    }
+    .header-link-btn.primary {
+      background: var(--text-main);
+      color: #fff;
+      border-color: var(--text-main);
+    }
+    .header-link-btn.primary:hover {
+      background: #1e293b;
+    }
+
+    .mobile-menu-btn {
+      display: none;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      color: var(--text-main);
+    }
+
+    /* Layout Container */
+    .docs-container {
+      display: flex;
+      min-height: calc(100vh - 60px);
+    }
+
+    /* Left Sidebar */
+    .docs-sidebar {
+      width: 290px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      padding: 1.5rem 1rem 3rem;
+      flex-shrink: 0;
+      overflow-y: auto;
+      position: sticky;
+      top: 60px;
+      height: calc(100vh - 60px);
+    }
+
+    .doc-search-box {
+      margin-bottom: 1.25rem;
+      position: relative;
+    }
+    .doc-search-input {
+      width: 100%;
+      padding: 0.45rem 0.75rem 0.45rem 2rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.825rem;
+      background: #fff;
+      color: var(--text-main);
+      outline: none;
+    }
+    .doc-search-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-light);
+    }
+    .doc-search-icon {
+      position: absolute;
+      left: 0.65rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 14px;
+      height: 14px;
+      color: var(--text-subtle);
+    }
+
+    .sidebar-section {
+      margin-bottom: 1.5rem;
+    }
+    .sidebar-heading {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+      padding-left: 0.5rem;
+    }
+
+    .doc-nav-item {
+      display: block;
+      padding: 0.4rem 0.65rem;
+      font-size: 0.825rem;
+      color: var(--text-secondary);
+      text-decoration: none;
+      border-radius: 5px;
+      margin-bottom: 2px;
+      transition: all 0.12s ease;
+      line-height: 1.35;
+    }
+    .doc-nav-item:hover {
+      color: var(--text-main);
+      background: #e2e8f0;
+    }
+    .doc-nav-item.active {
+      background: #e2e8f0;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Main Content Area */
+    .docs-content {
+      flex: 1;
+      padding: 2.5rem 3.5rem;
+      max-width: 960px;
+      min-width: 0;
+    }
+
+    .doc-breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+    .doc-breadcrumb a {
+      color: var(--text-muted);
+      text-decoration: none;
+    }
+    .doc-breadcrumb a:hover {
+      color: var(--text-main);
+    }
+
+    /* Markdown Rendered Typography */
+    .markdown-body {
+      color: var(--text-main);
+      font-size: 0.95rem;
+      line-height: 1.7;
+    }
+    .markdown-body h1 {
+      font-size: 2rem;
+      font-weight: 750;
+      letter-spacing: -0.03em;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .markdown-body h2 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-top: 2rem;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .markdown-body h3 {
+      font-size: 1.15rem;
+      font-weight: 650;
+      margin-top: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .markdown-body p {
+      margin-bottom: 1rem;
+    }
+    .markdown-body ul, .markdown-body ol {
+      margin-bottom: 1rem;
+      padding-left: 1.5rem;
+    }
+    .markdown-body li {
+      margin-bottom: 0.35rem;
+    }
+    .markdown-body blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 0.5rem 1rem;
+      background: var(--bg-sidebar);
+      border-radius: 0 6px 6px 0;
+      margin: 1.25rem 0;
+      color: var(--text-secondary);
+      font-style: italic;
+    }
+    .markdown-body table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5rem 0;
+      font-size: 0.875rem;
+    }
+    .markdown-body th, .markdown-body td {
+      border: 1px solid var(--border);
+      padding: 0.55rem 0.85rem;
+      text-align: left;
+    }
+    .markdown-body th {
+      background: var(--bg-sidebar);
+      font-weight: 600;
+    }
+    .markdown-body tr:nth-child(even) {
+      background: #fafafa;
+    }
+    .markdown-body code {
+      font-family: var(--font-mono);
+      font-size: 0.85em;
+      background: var(--bg-muted);
+      color: #b91c1c;
+      padding: 0.15rem 0.35rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .markdown-body pre {
+      background: var(--bg-code);
+      color: #f8fafc;
+      padding: 1.25rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 1.25rem 0;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 1.5;
+      position: relative;
+    }
+    .markdown-body pre code {
+      background: transparent;
+      color: inherit;
+      border: none;
+      padding: 0;
+    }
+
+    .copy-code-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #cbd5e1;
+      font-size: 0.72rem;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: var(--font-sans);
+      transition: all 0.15s ease;
+    }
+    .copy-code-btn:hover {
+      background: rgba(255, 255, 255, 0.25);
+      color: #fff;
+    }
+
+    /* Mobile Responsiveness */
+    @media (max-width: 900px) {
+      .mobile-menu-btn { display: inline-flex; }
+      .docs-sidebar {
+        position: fixed;
+        left: -100%;
+        top: 60px;
+        z-index: 40;
+        transition: left 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        box-shadow: 4px 0 24px rgba(0,0,0,0.15);
+      }
+      .docs-sidebar.open {
+        left: 0;
+      }
+      .docs-content {
+        padding: 1.5rem 1rem;
+      }
+      .header-links .hide-sm {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header class="doc-header">
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+      <button class="mobile-menu-btn" onclick="toggleSidebar()" aria-label="Toggle Navigation">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+      </button>
+      <a href="/" class="doc-brand">
+        <div class="doc-brand-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+        </div>
+        <span>YT Clipping Intelligence</span>
+        <span class="doc-badge">Docs Hub</span>
+      </a>
+    </div>
+
+    <div class="header-links">
+      <a href="/api/docs" target="_blank" class="header-link-btn hide-sm" title="Open Interactive Swagger OpenAPI Explorer">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+        <span>Swagger API</span>
+      </a>
+      <a href="/studio" class="header-link-btn primary" title="Open Live Studio Workspace">
+        <span>Studio Workspace ↗</span>
+      </a>
+      <a href="/" class="header-link-btn hide-sm">
+        <span>Showcase</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Docs Container -->
+  <div class="docs-container">
+    <!-- Left Sidebar -->
+    <aside class="docs-sidebar" id="docsSidebar">
+      <div class="doc-search-box">
+        <svg class="doc-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" class="doc-search-input" id="docSearch" placeholder="Filter documentation..." onkeyup="filterDocs()">
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Architecture & Pipeline</div>
+        <a href="#ARCHITECTURE.md" class="doc-nav-item active" onclick="loadDoc('ARCHITECTURE.md')">System Architecture</a>
+        <a href="#MULTI_TENANT_AI_PIPELINE_AND_RESOURCE_GOVERNANCE.md" class="doc-nav-item" onclick="loadDoc('MULTI_TENANT_AI_PIPELINE_AND_RESOURCE_GOVERNANCE.md')">Multi-Tenant AI & Governance</a>
+        <a href="#OMNIPOST_INTEGRATION_FLOWS.md" class="doc-nav-item" onclick="loadDoc('OMNIPOST_INTEGRATION_FLOWS.md')">OmniPost Integration Flows</a>
+        <a href="#SYSTEM_MENTAL_MAP.md" class="doc-nav-item" onclick="loadDoc('SYSTEM_MENTAL_MAP.md')">System Mental Map</a>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Developer Reference</div>
+        <a href="#CLI_REFERENCE.md" class="doc-nav-item" onclick="loadDoc('CLI_REFERENCE.md')">CLI Reference</a>
+        <a href="#mcp.md" class="doc-nav-item" onclick="loadDoc('mcp.md')">Model Context Protocol (MCP)</a>
+        <a href="#MODULE_REFERENCE.md" class="doc-nav-item" onclick="loadDoc('MODULE_REFERENCE.md')">Module Reference</a>
+        <a href="#PHASE_2_API_REFERENCE.md" class="doc-nav-item" onclick="loadDoc('PHASE_2_API_REFERENCE.md')">Studio REST API Specs</a>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Reliability & Certification</div>
+        <a href="#FINAL_PRODUCTION_CERTIFICATION_REPORT.md" class="doc-nav-item" onclick="loadDoc('FINAL_PRODUCTION_CERTIFICATION_REPORT.md')">Production Certification</a>
+        <a href="#COMPREHENSIVE_TEST_REPORT.md" class="doc-nav-item" onclick="loadDoc('COMPREHENSIVE_TEST_REPORT.md')">Comprehensive Test Report</a>
+        <a href="#PRODUCTION_OPERATIONS_AND_BACKUP.md" class="doc-nav-item" onclick="loadDoc('PRODUCTION_OPERATIONS_AND_BACKUP.md')">Operations & Backup</a>
+        <a href="#MASTER_PROMPT_MULTI_TENANT_STRESS_AND_AI_BRIDGE.md" class="doc-nav-item" onclick="loadDoc('MASTER_PROMPT_MULTI_TENANT_STRESS_AND_AI_BRIDGE.md')">Master Engineering Directive</a>
+        <a href="#README.md" class="doc-nav-item" onclick="loadDoc('README.md')">Project Overview (README)</a>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="docs-content">
+      <div class="doc-breadcrumb">
+        <a href="/docs">Docs</a>
+        <span>/</span>
+        <span id="breadcrumbCurrent">ARCHITECTURE.md</span>
+      </div>
+
+      <article class="markdown-body" id="docArticle">
+        <div style="padding: 2rem 0; text-align: center; color: var(--text-muted);">
+          Loading documentation...
+        </div>
+      </article>
+    </main>
+  </div>
+
+  <script>
+    let currentDoc = 'ARCHITECTURE.md';
+
+    function toggleSidebar() {
+      document.getElementById('docsSidebar').classList.toggle('open');
+    }
+
+    function filterDocs() {
+      const q = document.getElementById('docSearch').value.toLowerCase();
+      document.querySelectorAll('.doc-nav-item').forEach(item => {
+        const text = item.textContent.toLowerCase();
+        item.style.display = text.includes(q) ? 'block' : 'none';
+      });
+    }
+
+    async function loadDoc(filename) {
+      currentDoc = filename;
+      document.getElementById('breadcrumbCurrent').textContent = filename;
+      
+      // Update sidebar active link
+      document.querySelectorAll('.doc-nav-item').forEach(link => {
+        const href = link.getAttribute('href') || '';
+        link.classList.toggle('active', href.endsWith(filename));
+      });
+
+      // Close mobile sidebar if open
+      document.getElementById('docsSidebar').classList.remove('open');
+
+      const article = document.getElementById('docArticle');
+      article.innerHTML = '<div style="padding: 2rem 0; text-align: center; color: var(--text-muted);">Loading documentation...</div>';
+
+      try {
+        const res = await fetch('/api/v1/docs/content/' + encodeURIComponent(filename));
+        if (!res.ok) {
+          throw new Error('HTTP ' + res.status);
+        }
+        const data = await res.json();
+        article.innerHTML = data.html || '<p>No content available.</p>';
+        document.title = (data.title || filename) + ' • Documentation Hub';
+
+        // Enhance code blocks with copy buttons
+        article.querySelectorAll('pre').forEach(pre => {
+          const btn = document.createElement('button');
+          btn.className = 'copy-code-btn';
+          btn.textContent = 'Copy';
+          btn.onclick = () => {
+            const code = pre.querySelector('code') ? pre.querySelector('code').innerText : pre.innerText;
+            navigator.clipboard.writeText(code).then(() => {
+              btn.textContent = 'Copied!';
+              setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+            });
+          };
+          pre.style.position = 'relative';
+          pre.appendChild(btn);
+        });
+
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (err) {
+        article.innerHTML = '<div style="padding: 2rem 0; color: #ef4444;"><h3>Failed to load document</h3><p>' + err.message + '</p></div>';
+      }
+    }
+
+    // Auto load on init from hash or query
+    window.addEventListener('DOMContentLoaded', () => {
+      const hash = window.location.hash.replace(/^#/, '');
+      const urlParams = new URLSearchParams(window.location.search);
+      const docParam = urlParams.get('doc');
+      const targetDoc = hash || docParam || currentDoc;
+      loadDoc(targetDoc);
+    });
+  </script>
+</body>
+</html>

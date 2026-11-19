@@ -136,6 +136,18 @@ def test_api_metadata_endpoint(client):
 
 def test_api_jobs_and_cancellation(client):
     """Verifies job status and cancellation endpoints."""
+    reg_res = client.post(
+        "/api/v1/rights/register",
+        json={
+            "video_id": "nEaJMdM1djM",
+            "basis": "OWNED",
+            "status": "VERIFIED",
+            "owner": "Studio Fixture Owner",
+            "proof_reference": "test-fixture-owned-render-job",
+        },
+    )
+    assert reg_res.status_code == 200
+
     # Trigger render
     render_req = {
         "video_id_or_url": "nEaJMdM1djM",
@@ -170,6 +182,18 @@ def test_api_job_sse_stream(client):
     err_res = client.get("/api/v1/jobs/missing-job/stream")
     assert err_res.status_code == 200
     assert "event: error" in err_res.text
+
+    reg_res = client.post(
+        "/api/v1/rights/register",
+        json={
+            "video_id": "nEaJMdM1djM",
+            "basis": "OWNED",
+            "status": "VERIFIED",
+            "owner": "Studio Fixture Owner",
+            "proof_reference": "test-fixture-owned-sse-stream",
+        },
+    )
+    assert reg_res.status_code == 200
 
     # Existing completed/cancelled job
     render_req = {
@@ -384,3 +408,177 @@ def test_api_trending_top10m_endpoint(client):
     assert "channel_subscribers" in first
     assert first["channel_subscribers"] >= 10_000_000
     assert "url" in first
+
+
+def test_active_job_eviction_protection():
+    """Regression test for L12: In-progress jobs must never be evicted from tracking."""
+    from yt_clipping.web.server import active_render_jobs, _prune_active_render_jobs, _active_jobs_lock
+
+    with _active_jobs_lock:
+        active_render_jobs.clear()
+        # Register 120 in-progress jobs
+        for i in range(120):
+            active_render_jobs[f"active_job_{i}"] = {
+                "status": "RENDERING",
+                "progress": 50,
+                "video_id": f"vid_{i}",
+            }
+        # Also register 10 completed jobs
+        for i in range(10):
+            active_render_jobs[f"done_job_{i}"] = {
+                "status": "COMPLETED",
+                "progress": 100,
+                "video_id": f"done_{i}",
+            }
+
+    # Prune with max_entries=100
+    _prune_active_render_jobs(max_entries=100)
+
+    with _active_jobs_lock:
+        # All 120 in-progress jobs MUST still be present
+        for i in range(120):
+            assert f"active_job_{i}" in active_render_jobs, f"Active job {i} was incorrectly evicted!"
+        # Completed jobs should have been pruned
+        pruned_completed = [f"done_job_{i}" for i in range(10) if f"done_job_{i}" not in active_render_jobs]
+        assert len(pruned_completed) > 0
+        active_render_jobs.clear()
+
+
+def test_active_jobs_thread_safety():
+    """Regression test for P06: Concurrent updates to active_render_jobs don't crash with RuntimeError."""
+    import threading
+    from yt_clipping.web.server import active_render_jobs, _prune_active_render_jobs, _active_jobs_lock
+
+    errors = []
+
+    def writer(tid):
+        try:
+            for i in range(50):
+                with _active_jobs_lock:
+                    active_render_jobs[f"job_{tid}_{i}"] = {"status": "RENDERING", "progress": i}
+                if i % 10 == 0:
+                    _prune_active_render_jobs(max_entries=50)
+        except Exception as e:
+            errors.append(e)
+
+    def reader():
+        try:
+            for _ in range(50):
+                with _active_jobs_lock:
+                    _ = list(active_render_jobs.items())
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=writer, args=(t,)) for t in range(4)]
+    threads.extend([threading.Thread(target=reader) for _ in range(4)])
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(errors) == 0, f"Thread safety errors occurred: {errors}"
+    with _active_jobs_lock:
+        active_render_jobs.clear()
+
+
+def test_legal_officer_config_endpoints(client):
+    """Verifies GET and POST /api/v1/config/legal-officer endpoints."""
+    # Test GET
+    res = client.get("/api/v1/config/legal-officer")
+    assert res.status_code == 200
+    data = res.json()
+    assert "enabled" in data
+    assert "mode" in data
+
+    # Test POST toggle off
+    res_off = client.post("/api/v1/config/legal-officer", json={"enabled": False})
+    assert res_off.status_code == 200
+    assert res_off.json()["enabled"] is False
+    assert res_off.json()["mode"] == "UNRESTRICTED_BYPASS"
+
+    # Test POST toggle on
+    res_on = client.post("/api/v1/config/legal-officer", json={"enabled": True})
+    assert res_on.status_code == 200
+    assert res_on.json()["enabled"] is True
+    assert res_on.json()["mode"] == "STRICT_COMPLIANCE"
+
+
+def test_governor_status_endpoint(client):
+    """Verifies GET /api/v1/system/governor-status endpoint."""
+    res = client.get("/api/v1/system/governor-status")
+    assert res.status_code == 200
+    data = res.json()
+    assert "hardware_concurrency" in data
+    assert data["hardware_concurrency"] >= 1
+    assert "free_disk_gb" in data
+    assert "zero_memory_leak_certified" in data
+    assert "legal_officer_enabled" in data
+
+
+def test_ai_video_tenants_and_jobs_endpoints(client):
+    """Verifies GET /api/v1/external/ai-video/tenants and /jobs endpoints."""
+    res_t = client.get("/api/v1/external/ai-video/tenants")
+    assert res_t.status_code == 200
+    assert "tenants" in res_t.json()
+
+    res_j = client.get("/api/v1/external/ai-video/jobs")
+    assert res_j.status_code == 200
+    assert "jobs" in res_j.json()
+
+
+def test_routes_studio_and_login_serve_html(client):
+    """Verifies that /studio and /login return the expected interfaces."""
+    res_studio = client.get("/studio")
+    assert res_studio.status_code == 200
+    assert "text/html" in res_studio.headers["content-type"]
+    assert "YT Clip Studio" in res_studio.text or "Live Studio" in res_studio.text
+    assert "themeToggleBtn" in res_studio.text
+    assert "navDropdownMenu" in res_studio.text
+
+    res_login = client.get("/login")
+    assert res_login.status_code == 200
+    assert "text/html" in res_login.headers["content-type"]
+    assert "Client & Operator Portal" in res_login.text
+
+
+def test_docs_hub_endpoints_and_rendering(client):
+    """Verifies that /docs, /docs/{file}, and documentation API endpoints operate reliably."""
+    # 1. Main documentation hub HTML
+    res_docs = client.get("/docs")
+    assert res_docs.status_code == 200
+    assert "text/html" in res_docs.headers["content-type"]
+    assert "Documentation Hub" in res_docs.text
+
+    # 2. Specific document load
+    res_readme = client.get("/docs/README.md")
+    assert res_readme.status_code == 200
+    assert "README.md" in res_readme.text
+
+    # 3. Documentation listing API
+    res_list = client.get("/api/v1/docs/list")
+    assert res_list.status_code == 200
+    data = res_list.json()
+    assert "docs" in data
+    assert data["total"] > 0
+    filenames = [d["filename"] for d in data["docs"]]
+    assert "ARCHITECTURE.md" in filenames or "README.md" in filenames
+
+    # 4. Render markdown content endpoint
+    res_content = client.get("/api/v1/docs/content/ARCHITECTURE.md")
+    assert res_content.status_code == 200
+    cdata = res_content.json()
+    assert "html" in cdata
+    assert "markdown" in cdata
+    assert len(cdata["html"]) > 100
+
+    # 5. Path traversal protection
+    res_trav = client.get("/api/v1/docs/content/../../etc/passwd")
+    assert res_trav.status_code in (403, 404)
+
+    # 6. Swagger API endpoint
+    res_swagger = client.get("/api/docs")
+    assert res_swagger.status_code == 200
+
+
+
+

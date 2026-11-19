@@ -57,6 +57,7 @@ def test_rights_gate_expired_manifest_blocks(tmp_path):
         basis=RightsBasis.EXPLICIT_PERMISSION,
         status=RightsStatus.VERIFIED,
         owner_name="Licensed Creator",
+        proof_reference="test-agreement-001",
         valid_until="2021-01-01T00:00:00Z",  # Expired in past
     )
     policy.register_rights(manifest)

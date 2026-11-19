@@ -126,3 +126,38 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
             print(f"  - [{it['file_type']}] {it['path']} ({it['size_bytes']:,} bytes) -> {it['action']}")
         if len(rep_dict["items"]) > 20:
             print(f"  ... and {len(rep_dict['items']) - 20} more files.")
+
+
+def cmd_rights_revoke(args: argparse.Namespace) -> None:
+    """Revokes verified rights for a video and cascades holds to active jobs."""
+    from ...rights import LocalRightsPolicy
+
+    policy = LocalRightsPolicy(ledger_path=args.ledger, db_path=getattr(args, "db", "data/jobs.db"))
+    try:
+        res = policy.revoke_rights(
+            video_id=args.video_id,
+            reason=args.reason,
+            actor=getattr(args, "actor", "cli_operator"),
+        )
+        print(f"[OK] Rights REVOKED for video '{args.video_id}': {res}")
+    except Exception as e:
+        print(f"[ERROR] Revocation failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_rights_audit(args: argparse.Namespace) -> None:
+    """Displays the immutable append-only rights audit log."""
+    from ...rights import LocalRightsPolicy
+
+    policy = LocalRightsPolicy(ledger_path=args.ledger, db_path=getattr(args, "db", "data/jobs.db"))
+    history = policy.get_audit_history(video_id=getattr(args, "video_id", None))
+    if not history:
+        print("No rights audit entries recorded.")
+        return
+    print(f"\n[OK] Rights Audit History ({len(history)} records):")
+    for entry in history:
+        print(
+            f"  - [{entry.get('created_at', '')}] {entry.get('video_id')} | "
+            f"{entry.get('previous_status')} -> {entry.get('new_status')} | "
+            f"basis={entry.get('basis')} | actor={entry.get('actor')} | reason={entry.get('reason')}"
+        )

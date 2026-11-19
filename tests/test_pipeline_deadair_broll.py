@@ -89,21 +89,34 @@ def _setup_pipeline_fixture(tmp_path):
 
 
 def _create_authorized_asset_with_transcript(fixtures, video_id: str, dead_air_pause: float = 2.0):
+    import subprocess
     # 1. Register Rights
     manifest = RightsManifest(
         rights_id=f"rights-{video_id}",
         video_id=video_id,
-        basis=RightsBasis.OPERATOR_ASSET,
+        basis=RightsBasis.OWNED,
         status=RightsStatus.VERIFIED,
         owner_name="Operator Archive",
+        proof_reference="test-fixture-owned",
         audit_notes="Fixture test media.",
     )
     fixtures["rights_policy"].register_rights(manifest)
 
-    # 2. Register Mock Media
+    # 2. Generate real valid MP4 media for FFmpeg dead-air filter testing
     media_path = os.path.join(fixtures["assets_dir"], f"{video_id}.mp4")
-    with open(media_path, "wb") as f:
-        f.write(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41" + (b"\x00" * 8192))
+    total_dur = int(45 + dead_air_pause)
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", f"testsrc=duration={total_dur}:size=320x240:rate=10",
+            "-f", "lavfi", "-i", f"sine=frequency=440:duration={total_dur}",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "40", "-c:a", "aac",
+            media_path,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
     fixtures["asset_provider"].register_asset_path(video_id, media_path)
 
     # 3. Create realistic 60s transcript with a distinct dead-air pause

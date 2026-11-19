@@ -115,7 +115,8 @@ class ChannelWatcher:
         identifier: str,
         name: Optional[str] = None,
         baseline_views: float = 20000.0,
-        policy: CreatorPolicy = CreatorPolicy.OPEN_AFFILIATE,
+        policy: CreatorPolicy = CreatorPolicy.REVIEW_REQUIRED,
+        approval_evidence: str = "",
     ) -> Dict[str, Any]:
         """Adds or updates a monitored channel in the SQLite registry."""
         cid, handle, resolved_name = resolve_channel_identifier(identifier)
@@ -155,8 +156,10 @@ class ChannelWatcher:
         self.attribution_engine.set_creator_policy(
             channel_id=cid,
             channel_name=final_name,
+            creator_handle=handle,
             policy=policy,
             notes=f"Registered via ChannelWatcher CLI for {handle}",
+            approval_evidence=approval_evidence,
         )
 
         return {
@@ -238,7 +241,22 @@ def main():
     p_add.add_argument("identifier", help="Channel @handle, URL, or UC... ID")
     p_add.add_argument("--name", default=None, help="Creator display name (optional)")
     p_add.add_argument("--baseline", type=float, default=20000.0, help="Expected 48h view baseline (default: 20000)")
-    p_add.add_argument("--policy", choices=["OPEN_AFFILIATE", "CREATIVE_COMMONS", "PARTNER_PROGRAM", "STRICT_COPYRIGHT"], default="OPEN_AFFILIATE", help="Clipping rights policy")
+    p_add.add_argument(
+        "--policy",
+        choices=[
+            "REVIEW_REQUIRED",
+            "STRICT_COPYRIGHT",
+            "APPROVED_PARTNER",
+            "VERIFIED_OPEN_LICENSE",
+            "OWNED_SOURCE",
+            "OPEN_AFFILIATE",
+            "CREATIVE_COMMONS",
+            "PARTNER_PROGRAM",
+        ],
+        default="REVIEW_REQUIRED",
+        help="Clipping rights policy (default-deny: REVIEW_REQUIRED)",
+    )
+    p_add.add_argument("--evidence", default="", help="Approval evidence / license agreement reference")
 
     # list
     p_list = subparsers.add_parser("list", help="List monitored channels")
@@ -272,7 +290,13 @@ def main():
 
     if args.subcmd == "add":
         pol = CreatorPolicy(args.policy)
-        res = watcher.add_channel(args.identifier, name=args.name, baseline_views=args.baseline, policy=pol)
+        res = watcher.add_channel(
+            args.identifier,
+            name=args.name,
+            baseline_views=args.baseline,
+            policy=pol,
+            approval_evidence=getattr(args, "evidence", ""),
+        )
         print(f"[OK] Added/Updated Monitored Channel:")
         print(f"  Name     : {res['name']}")
         print(f"  ChannelID: {res['channel_id']}")

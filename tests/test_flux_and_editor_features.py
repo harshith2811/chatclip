@@ -13,7 +13,9 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
 from yt_clipping.rendering.flux_generator import FluxImageGenerator, STYLE_PRESETS
-from yt_clipping.web.server import app, flux_generator
+from yt_clipping.web.server import app, flux_generator, DATA_DIR, DB_PATH
+from yt_clipping.rights.gate import LocalRightsPolicy
+from yt_clipping.contracts.models import RightsBasis, RightsStatus
 
 
 @pytest.fixture
@@ -430,6 +432,15 @@ def test_visual_creative_director_execute_intervention(tmp_path):
 
 def test_api_trending_stream_to_clipper_endpoint(client):
     """Verifies POST /api/v1/trending/stream-to-clipper initiates background workflow."""
+    policy = LocalRightsPolicy(os.path.join(DATA_DIR, "rights_ledger.json"), db_path=DB_PATH)
+    policy.register_rights(
+        video_id="0e3GPea1Tyg",
+        basis=RightsBasis.OWNED,
+        owner="TestFixtureOwner",
+        status=RightsStatus.VERIFIED,
+        proof_reference="test-fixture-stream-owned",
+        allow_regrant_revoked=True,
+    )
     with patch("yt_clipping.web.server._render_video_pipeline", return_value=[{"clip_id": "clip_test_1", "file_path": "clip.mp4", "duration": 15.0}]):
         resp = client.post(
             "/api/v1/trending/stream-to-clipper",

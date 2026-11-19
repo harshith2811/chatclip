@@ -70,9 +70,10 @@ def test_complete_end_to_end_vertical_slice(tmp_path):
     manifest = RightsManifest(
         rights_id="rights-fixture-01",
         video_id=video_id,
-        basis=RightsBasis.OPERATOR_ASSET,
+        basis=RightsBasis.OWNED,
         status=RightsStatus.VERIFIED,
         owner_name="Operator Internal Archive",
+        proof_reference="test-fixture-owned",
         audit_notes="Synthetic fixture approved for automated testing.",
     )
     rights_policy.register_rights(manifest)

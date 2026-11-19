@@ -25,6 +25,7 @@ from ..contracts.models import (
     compute_canonical_idempotency_key,
 )
 from ..contracts.interfaces import HandoffPublisher
+from ..config import is_legal_officer_enabled
 from ..orchestration.db import DatabaseManager
 
 
@@ -272,19 +273,61 @@ class DualModeAutopostPublisher(HandoffPublisher):
                 },
             )
 
-        # 2. Hard Rights Gate Check
-        if not rights_manifest.is_valid():
-            rejected_receipt = HandoffReceipt(
-                receipt_id=receipt_id,
-                clip_id=rendered_clip.clip_id,
-                idempotency_key=idempotency_key,
-                status="REJECTED",
-                timestamp=now_iso,
-                target_mode=self.mode,
-                dry_run=dry_run,
-                response_payload={"reason": f"Rights check failed. Status: {rights_manifest.status.value}"},
-            )
-            return rejected_receipt
+        # 2. Hard Rights Gate Check (in-memory manifest + fresh DB revocation state)
+        if is_legal_officer_enabled():
+            if not rights_manifest.is_valid():
+                rejected_receipt = HandoffReceipt(
+                    receipt_id=receipt_id,
+                    clip_id=rendered_clip.clip_id,
+                    idempotency_key=idempotency_key,
+                    status="REJECTED",
+                    timestamp=now_iso,
+                    target_mode=self.mode,
+                    dry_run=dry_run,
+                    response_payload={"reason": f"Rights check failed. Status: {rights_manifest.status.value}"},
+                )
+                return rejected_receipt
+
+            conn = self.db.get_connection()
+            try:
+                tables = {
+                    r[0]
+                    for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+                }
+                if "revocation_impacts" in tables:
+                    rev = conn.execute(
+                        "SELECT action_taken FROM revocation_impacts WHERE video_id = ? LIMIT 1",
+                        (candidate.video_id,),
+                    ).fetchone()
+                    if rev:
+                        return HandoffReceipt(
+                            receipt_id=receipt_id,
+                            clip_id=rendered_clip.clip_id,
+                            idempotency_key=idempotency_key,
+                            status="REJECTED",
+                            timestamp=now_iso,
+                            target_mode=self.mode,
+                            dry_run=dry_run,
+                            response_payload={"reason": f"Rights revoked for '{candidate.video_id}' ({rev[0]})."},
+                        )
+                if "rights_ledger" in tables:
+                    lrow = conn.execute(
+                        "SELECT status FROM rights_ledger WHERE video_id = ?",
+                        (candidate.video_id,),
+                    ).fetchone()
+                    if lrow is not None and lrow[0] != "VERIFIED":
+                        return HandoffReceipt(
+                            receipt_id=receipt_id,
+                            clip_id=rendered_clip.clip_id,
+                            idempotency_key=idempotency_key,
+                            status="REJECTED",
+                            timestamp=now_iso,
+                            target_mode=self.mode,
+                            dry_run=dry_run,
+                            response_payload={"reason": f"Fresh DB rights ledger blocks '{candidate.video_id}' (status={lrow[0]})."},
+                        )
+            finally:
+                conn.close()
 
         # 3. Quality Assurance Check
         if qa_report.status == "FAILED":

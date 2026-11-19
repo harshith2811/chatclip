@@ -202,17 +202,20 @@ class ConstrainedTrajectoryOptimizer:
         if T >= 2:
             dts = np.maximum(np.diff(ts), 1e-4)
             diffs = np.diff(smoothed_centers)
-            vels = np.zeros(T - 1, dtype=np.float64)
-            for i in range(T - 1):
-                if (i + 1) not in cut_start_indices:
-                    vels[i] = abs(diffs[i]) / dts[i]
+            vels = np.abs(diffs) / dts
+            for s in cut_start_indices:
+                if 0 <= s - 1 < len(vels):
+                    vels[s - 1] = 0.0
             max_obs_v = float(np.max(vels)) if len(vels) > 0 else 0.0
 
             if len(vels) >= 2:
-                accs = np.zeros(len(vels) - 1, dtype=np.float64)
-                for i in range(len(vels) - 1):
-                    if (i + 1) not in cut_start_indices and (i + 2) not in cut_start_indices:
-                        accs[i] = abs(vels[i + 1] - vels[i]) / dts[i]
+                acc_diffs = np.diff(vels)
+                accs = np.abs(acc_diffs) / dts[:-1]
+                for s in cut_start_indices:
+                    if 0 <= s - 2 < len(accs):
+                        accs[s - 2] = 0.0
+                    if 0 <= s - 1 < len(accs):
+                        accs[s - 1] = 0.0
                 max_obs_a = float(np.max(accs)) if len(accs) > 0 else 0.0
 
         # Decompose into cinematic segments
@@ -231,7 +234,7 @@ class ConstrainedTrajectoryOptimizer:
         )
 
     def _impute_missing_centers(self, raw: np.ndarray, canvas_w: float) -> np.ndarray:
-        """Interpolates missing/dropped face detections across time."""
+        """Interpolates missing/dropped face detections across time, anchoring undefined boundaries to center."""
         c_mid = canvas_w / 2.0
         finite_mask = np.isfinite(raw)
         if not np.any(finite_mask):
@@ -239,8 +242,28 @@ class ConstrainedTrajectoryOptimizer:
         if np.all(finite_mask):
             return raw.copy()
 
+        finite_indices = np.where(finite_mask)[0]
+        first_idx = int(finite_indices[0])
+        last_idx = int(finite_indices[-1])
+
+        extended_indices = [int(i) for i in finite_indices]
+        extended_values = [float(v) for v in raw[finite_mask]]
+
+        # If clip starts without a valid face, anchor index 0 at center
+        # so video never starts with an extreme left/right edge crop
+        if first_idx > 0:
+            extended_indices.insert(0, 0)
+            # If first face is detected within first 3 samples, blend softly; otherwise start at center
+            start_val = c_mid if first_idx > 3 else (0.7 * c_mid + 0.3 * raw[first_idx])
+            extended_values.insert(0, start_val)
+
+        if last_idx < len(raw) - 1:
+            extended_indices.append(len(raw) - 1)
+            end_val = c_mid if (len(raw) - 1 - last_idx) > 5 else raw[last_idx]
+            extended_values.append(end_val)
+
         indices = np.arange(len(raw))
-        imputed = np.interp(indices, indices[finite_mask], raw[finite_mask])
+        imputed = np.interp(indices, np.array(extended_indices, dtype=float), np.array(extended_values, dtype=float))
         return imputed
 
     def _partition_into_shots(
@@ -381,63 +404,83 @@ class ConstrainedTrajectoryOptimizer:
         if N <= 1:
             return np.clip(p, c_min, c_max)
 
+        p_list = p.tolist()
+        a_dt = a_max * dt
+        inv_dt = 1.0 / dt
+
         # 1. Forward Pass
-        x_fwd = np.zeros(N, dtype=np.float64)
-        v_fwd = np.zeros(N, dtype=np.float64)
-        x_fwd[0] = np.clip(p[0], c_min, c_max)
-        v_fwd[0] = 0.0
+        x_fwd = [0.0] * N
+        p0 = float(p_list[0])
+        x_prev = c_min if p0 < c_min else (c_max if p0 > c_max else p0)
+        v_prev = 0.0
+        x_fwd[0] = x_prev
 
         for t in range(1, N):
-            v_des = np.clip((p[t] - x_fwd[t - 1]) / dt, -v_max, v_max)
-            v_t = np.clip(v_des, v_fwd[t - 1] - a_max * dt, v_fwd[t - 1] + a_max * dt)
-            x_t = np.clip(x_fwd[t - 1] + v_t * dt, c_min, c_max)
-            v_fwd[t] = (x_t - x_fwd[t - 1]) / dt
+            diff = (p_list[t] - x_prev) * inv_dt
+            v_des = -v_max if diff < -v_max else (v_max if diff > v_max else diff)
+            v_lo = v_prev - a_dt
+            v_hi = v_prev + a_dt
+            v_t = v_lo if v_des < v_lo else (v_hi if v_des > v_hi else v_des)
+            nxt = x_prev + v_t * dt
+            x_t = c_min if nxt < c_min else (c_max if nxt > c_max else nxt)
+            v_prev = (x_t - x_prev) * inv_dt
+            x_prev = x_t
             x_fwd[t] = x_t
 
         # 2. Backward Pass (Safe deceleration distance to stop without jerk)
-        x_bwd = np.zeros(N, dtype=np.float64)
-        v_bwd = np.zeros(N, dtype=np.float64)
-        x_bwd[-1] = x_fwd[-1]
-        v_bwd[-1] = 0.0
+        x_bwd = [0.0] * N
+        x_next = x_fwd[-1]
+        v_next = 0.0
+        x_bwd[-1] = x_next
 
         for t in range(N - 2, -1, -1):
-            dist = abs(x_bwd[t + 1] - x_fwd[t])
-            v_safe = math.sqrt(max(0.0, 2.0 * a_max * dist))
-            v_lim = min(v_max, v_safe)
-            diff = x_bwd[t + 1] - x_fwd[t]
-            sign = 1.0 if diff >= 0 else -1.0
-            v_des = sign * min(v_lim, abs(diff) / dt)
-            v_t = np.clip(v_des, v_bwd[t + 1] - a_max * dt, v_bwd[t + 1] + a_max * dt)
-            x_t = np.clip(x_bwd[t + 1] - v_t * dt, c_min, c_max)
-            v_bwd[t] = (x_bwd[t + 1] - x_t) / dt
+            xf = x_fwd[t]
+            dist = x_next - xf
+            abs_dist = -dist if dist < 0 else dist
+            v_safe = math.sqrt(2.0 * a_max * abs_dist) if abs_dist > 0 else 0.0
+            v_lim = v_safe if v_safe < v_max else v_max
+            diff_dt = dist * inv_dt
+            abs_diff_dt = -diff_dt if diff_dt < 0 else diff_dt
+            clamped_mag = abs_diff_dt if abs_diff_dt < v_lim else v_lim
+            v_des = clamped_mag if dist >= 0 else -clamped_mag
+            v_lo = v_next - a_dt
+            v_hi = v_next + a_dt
+            v_t = v_lo if v_des < v_lo else (v_hi if v_des > v_hi else v_des)
+            nxt = x_next - v_t * dt
+            x_t = c_min if nxt < c_min else (c_max if nxt > c_max else nxt)
+            v_next = (x_next - x_t) * inv_dt
+            x_next = x_t
             x_bwd[t] = x_t
 
-        # 3. Reconciliation & blend
-        x_smooth = np.zeros(N, dtype=np.float64)
-        for t in range(N):
-            if t == 0:
-                x_smooth[t] = x_fwd[0]
-            elif t == N - 1:
-                x_smooth[t] = x_fwd[-1]
-            else:
-                if x_fwd[t + 1] >= x_fwd[t - 1]:
-                    x_smooth[t] = min(x_fwd[t], x_bwd[t])
-                else:
-                    x_smooth[t] = max(x_fwd[t], x_bwd[t])
-
-        # 4. Final strict kinematic projection forward pass
-        x_final = np.zeros(N, dtype=np.float64)
-        v_final = np.zeros(N, dtype=np.float64)
-        x_final[0] = np.clip(x_smooth[0], c_min, c_max)
-        v_final[0] = 0.0
+        # 3. Final strict kinematic projection forward pass
+        x_final = [0.0] * N
+        x_prev = x_fwd[0]
+        v_prev = 0.0
+        x_final[0] = x_prev
 
         for t in range(1, N):
-            v_des = np.clip((x_smooth[t] - x_final[t - 1]) / dt, -v_max, v_max)
-            v_t = np.clip(v_des, v_final[t - 1] - a_max * dt, v_final[t - 1] + a_max * dt)
-            x_final[t] = np.clip(x_final[t - 1] + v_t * dt, c_min, c_max)
-            v_final[t] = (x_final[t] - x_final[t - 1]) / dt
+            if t == N - 1:
+                target = x_fwd[-1]
+            else:
+                xf = x_fwd[t]
+                xb = x_bwd[t]
+                if x_fwd[t + 1] >= x_fwd[t - 1]:
+                    target = xf if xf < xb else xb
+                else:
+                    target = xf if xf > xb else xb
 
-        return x_final
+            diff = (target - x_prev) * inv_dt
+            v_des = -v_max if diff < -v_max else (v_max if diff > v_max else diff)
+            v_lo = v_prev - a_dt
+            v_hi = v_prev + a_dt
+            v_t = v_lo if v_des < v_lo else (v_hi if v_des > v_hi else v_des)
+            nxt = x_prev + v_t * dt
+            x_t = c_min if nxt < c_min else (c_max if nxt > c_max else nxt)
+            v_prev = (x_t - x_prev) * inv_dt
+            x_prev = x_t
+            x_final[t] = x_t
+
+        return np.array(x_final, dtype=np.float64)
 
     def _decompose_segments(
         self,
@@ -452,16 +495,20 @@ class ConstrainedTrajectoryOptimizer:
         if T == 0:
             return segments
 
+        xs = crop_xs.tolist()
+        ts = timestamps.tolist()
+        inv_dt = 1.0 / dt
+
         for s_idx, (s_start, s_end) in enumerate(shots):
             # If transition between shots exists, add a cut segment
             if s_idx > 0:
                 prev_end = shots[s_idx - 1][1]
                 segments.append(
                     KinematicSegment(
-                        start_time=round(float(timestamps[prev_end]), 3),
-                        end_time=round(float(timestamps[s_start]), 3),
-                        start_crop_x=int(crop_xs[prev_end]),
-                        end_crop_x=int(crop_xs[s_start]),
+                        start_time=round(float(ts[prev_end]), 3),
+                        end_time=round(float(ts[s_start]), 3),
+                        start_crop_x=int(xs[prev_end]),
+                        end_crop_x=int(xs[s_start]),
                         mode="cut",
                         max_velocity=0.0,
                     )
@@ -473,8 +520,9 @@ class ConstrainedTrajectoryOptimizer:
             peak_v = 0.0
 
             for i in range(s_start + 1, s_end + 1):
-                dx = abs(crop_xs[i] - crop_xs[i - 1])
-                step_v = dx / dt
+                diff = xs[i] - xs[i - 1]
+                dx = -diff if diff < 0 else diff
+                step_v = dx * inv_dt
                 is_moving = dx > 0
 
                 step_mode = "pan" if is_moving else "hold"
@@ -483,10 +531,10 @@ class ConstrainedTrajectoryOptimizer:
                     # Flush current segment
                     segments.append(
                         KinematicSegment(
-                            start_time=round(float(timestamps[cur_start]), 3),
-                            end_time=round(float(timestamps[i - 1]), 3),
-                            start_crop_x=int(crop_xs[cur_start]),
-                            end_crop_x=int(crop_xs[i - 1]),
+                            start_time=round(float(ts[cur_start]), 3),
+                            end_time=round(float(ts[i - 1]), 3),
+                            start_crop_x=int(xs[cur_start]),
+                            end_crop_x=int(xs[i - 1]),
                             mode=cur_mode,
                             max_velocity=round(float(peak_v), 1),
                         )
@@ -495,15 +543,16 @@ class ConstrainedTrajectoryOptimizer:
                     cur_mode = step_mode
                     peak_v = step_v
                 else:
-                    peak_v = max(peak_v, step_v)
+                    if step_v > peak_v:
+                        peak_v = step_v
 
             # Flush tail segment of this shot
             segments.append(
                 KinematicSegment(
-                    start_time=round(float(timestamps[cur_start]), 3),
-                    end_time=round(float(timestamps[s_end]), 3),
-                    start_crop_x=int(crop_xs[cur_start]),
-                    end_crop_x=int(crop_xs[s_end]),
+                    start_time=round(float(ts[cur_start]), 3),
+                    end_time=round(float(ts[s_end]), 3),
+                    start_crop_x=int(xs[cur_start]),
+                    end_crop_x=int(xs[s_end]),
                     mode=cur_mode,
                     max_velocity=round(float(peak_v), 1),
                 )

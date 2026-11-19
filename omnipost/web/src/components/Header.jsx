@@ -1,5 +1,5 @@
 import React from 'react';
-import { Share2, Table, Folder, LogOut, Zap } from 'lucide-react';
+import { Share2, Table, Folder, LogOut, Zap, Video } from 'lucide-react';
 
 const STATUS_COPY = {
   checking: { label: 'Checking…', className: 'status-checking' },
@@ -33,6 +33,18 @@ export default function Header({ pipelineStatus = 'checking', onLogout, onOpenIn
             <span className={`status-dot ${pipelineStatus === 'online' ? 'pulsing' : ''}`}></span>
             <span className="status-text">{label}</span>
           </div>
+          <a
+            href="http://localhost:8000"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-secondary"
+            id="btn-open-yt-studio"
+            title="Open YouTube Clipping Intelligence Studio (:8000)"
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', color: '#38bdf8' }}
+          >
+            <Video size={15} />
+            <span className="btn-secondary-label">YT Clip Studio ↗</span>
+          </a>
           {onOpenIntegrations && (
             <button
               type="button"

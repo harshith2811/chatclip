@@ -10,7 +10,7 @@ Enforces 'Strong Start, Strong End' paradigm:
 Zero external dependencies, microsecond latency (< 10ms for full video).
 """
 
-from typing import List, Optional, Tuple, Any
+from typing import List, Optional, Tuple, Any, Set
 import uuid
 import math
 import statistics
@@ -133,6 +133,12 @@ class ArcDetector:
         for wc in word_counts:
             cum_words.append(cum_words[-1] + wc)
         payoff_cache = [self._score_payoff_resolution(s) for s in classified_sentences]
+        sentence_words = [
+            {w for w in s.text.lower().replace("?", "").replace(".", "").split() if len(w) > 3}
+            for s in classified_sentences
+        ]
+        sentence_types = [s.sentence_type for s in classified_sentences]
+        has_transcript_words = any(bool(s.words) for s in classified_sentences)
 
         for i in range(n):
             start_sent = classified_sentences[i]
@@ -160,8 +166,8 @@ class ArcDetector:
                 # Allow conversational opening if preceded by acoustic pause boundary (> 0.35s)
                 # or if it exhibits clear standalone complete sentence structure
                 has_clear_structure = (
-                    start_sent.confidence >= 0.90
-                    and start_sent.sentence_type in (HOOK, REVELATION, CONTEXT)
+                    start_sent.confidence >= 0.85
+                    and start_sent.sentence_type in (HOOK, REVELATION, CONTEXT, ESCALATION)
                     and word_counts[i] >= 6
                     and start_sent.text.strip().endswith((".", "!", "?"))
                 )
@@ -169,8 +175,8 @@ class ArcDetector:
                     continue
             if first_word == "they" and not is_they_hook and not is_quoted:
                 has_clear_structure = (
-                    start_sent.confidence >= 0.90
-                    and start_sent.sentence_type in (HOOK, REVELATION, CONTEXT)
+                    start_sent.confidence >= 0.85
+                    and start_sent.sentence_type in (HOOK, REVELATION, CONTEXT, ESCALATION)
                     and word_counts[i] >= 6
                     and start_sent.text.strip().endswith((".", "!", "?"))
                 )
@@ -187,7 +193,7 @@ class ArcDetector:
 
             # Scan forward to discover matching payoffs within duration window
             arc_sentences: List[ClassifiedSentence] = [start_sent]
-            hook_candidates: List[HighlightCandidate] = []
+            hook_evals: List[Tuple[float, int, float, List[ClassifiedSentence], int]] = []
 
             for j in range(i + 1, n):
                 end_sent = classified_sentences[j]
@@ -213,36 +219,73 @@ class ArcDetector:
 
                     if ends_sentence and not has_weak_ending:
                         cand_num_words = cum_words[j + 1] - cum_words[i]
-                        cand = self._evaluate_and_build_candidate(
-                            start_sent=start_sent,
-                            end_sent=end_sent,
-                            arc_sentences=arc_sentences,
-                            transcript=transcript,
-                            heatmap=heatmap,
-                            audio_analyzer=eff_audio_analyzer,
-                            motion_analyzer=eff_motion_analyzer,
-                            cadence_scorer=cadence_scorer,
-                            has_pause_boundary=has_pause_boundary,
-                            precomputed_hook_score=hook_score,
-                            precomputed_payoff_score=payoff_cache[j],
-                            precomputed_num_words=cand_num_words,
+                        p_score = min(
+                            10.0,
+                            payoff_cache[j] + self._compute_contextual_payoff_bonus(
+                                start_sent, end_sent, h_words=sentence_words[i], p_words=sentence_words[j]
+                            )
                         )
-                        if cand and cand.validate_bounds(transcript.duration_seconds or end_sent.end):
-                            hook_candidates.append(cand)
+                        a_score = self._score_arc_completeness(arc_sentences, precomputed_types=sentence_types[i : j + 1])
+                        d_score = self._score_speech_dynamics(
+                            arc_sentences, arc_dur, cadence_scorer=cadence_scorer, num_words=cand_num_words, has_words=has_transcript_words
+                        )
+                        approx_score = hook_score * 3.0 + p_score * 2.5 + a_score * 2.0 + d_score * 1.0
 
-            if hook_candidates:
-                # Keep top 2 distinctly-sized candidates for this hook
-                hook_candidates.sort(key=lambda c: c.score, reverse=True)
-                raw_candidates.append(hook_candidates[0])
-                if len(hook_candidates) > 1 and abs(hook_candidates[1].duration_seconds - hook_candidates[0].duration_seconds) >= 8.0:
-                    raw_candidates.append(hook_candidates[1])
+                        # Topological retention alignment: heavily prioritize arcs that cover real viewer replay peaks
+                        if heatmap and getattr(heatmap, "peaks", None):
+                            for pk in heatmap.peaks:
+                                if start_sent.start <= pk.center_time <= end_sent.end:
+                                    if pk.classification == "GLOBAL_MAXIMA":
+                                        approx_score += 25.0 * pk.intensity
+                                    elif pk.classification == "SPIKE_PAYOFF":
+                                        approx_score += 15.0 * pk.intensity
+                                    else:
+                                        approx_score += 8.0 * pk.intensity
+                                    break
+
+                        hook_evals.append((approx_score, j, arc_dur, cand_num_words))
+
+            if hook_evals:
+                # Keep top 2 distinctly-sized candidate candidates for this hook
+                hook_evals.sort(key=lambda e: e[0], reverse=True)
+                selected_evals = [hook_evals[0]]
+                if len(hook_evals) > 1:
+                    for ev in hook_evals[1:]:
+                        if abs(ev[2] - hook_evals[0][2]) >= 8.0:
+                            selected_evals.append(ev)
+                            break
+
+                for _, j, _, ev_words in selected_evals:
+                    ev_sents = classified_sentences[i : j + 1]
+                    cand = self._evaluate_and_build_candidate(
+                        start_sent=start_sent,
+                        end_sent=classified_sentences[j],
+                        arc_sentences=ev_sents,
+                        transcript=transcript,
+                        heatmap=heatmap,
+                        audio_analyzer=eff_audio_analyzer,
+                        motion_analyzer=eff_motion_analyzer,
+                        cadence_scorer=cadence_scorer,
+                        has_pause_boundary=has_pause_boundary,
+                        precomputed_hook_score=hook_score,
+                        precomputed_payoff_score=payoff_cache[j],
+                        precomputed_num_words=ev_words,
+                        hook_words=sentence_words[i],
+                        payoff_words=sentence_words[j],
+                    )
+                    if cand and cand.validate_bounds(transcript.duration_seconds or classified_sentences[j].end):
+                        raw_candidates.append(cand)
 
         if not raw_candidates:
             return []
 
+        raw_candidates.sort(key=lambda c: c.score, reverse=True)
+        if len(raw_candidates) > 150:
+            raw_candidates = raw_candidates[:150]
+
         if deduplicate:
             return suppress_overlapping_candidates(raw_candidates, iou_threshold=0.40, containment_threshold=0.65)
-        return sorted(raw_candidates, key=lambda c: c.score, reverse=True)
+        return raw_candidates
 
     def _evaluate_and_build_candidate(
         self,
@@ -258,6 +301,8 @@ class ArcDetector:
         precomputed_hook_score: Optional[float] = None,
         precomputed_payoff_score: Optional[float] = None,
         precomputed_num_words: Optional[int] = None,
+        hook_words: Optional[Set[str]] = None,
+        payoff_words: Optional[Set[str]] = None,
     ) -> Optional[HighlightCandidate]:
         """Evaluates candidate arc across multi-signal dimensions and constructs candidate."""
         w_start = start_sent.start
@@ -267,7 +312,6 @@ class ArcDetector:
         if w_dur <= 0.0 or w_end <= w_start:
             return None
 
-        full_text = " ".join(s.text for s in arc_sentences).strip()
         first_sentence_text = start_sent.text.strip()
         last_sentence_text = end_sent.text.strip()
 
@@ -281,7 +325,13 @@ class ArcDetector:
         if precomputed_payoff_score is not None:
             payoff_score = precomputed_payoff_score
         else:
-            payoff_score = self._score_payoff_resolution(end_sent, full_text)
+            payoff_score = self._score_payoff_resolution(end_sent)
+        payoff_score = min(
+            10.0,
+            payoff_score + self._compute_contextual_payoff_bonus(
+                start_sent, end_sent, h_words=hook_words, p_words=payoff_words
+            )
+        )
 
         # 3. Arc Completeness Score (0.0 - 10.0)
         arc_score = self._score_arc_completeness(arc_sentences)
@@ -317,10 +367,10 @@ class ArcDetector:
                     heatmap_score = 10.0
                     heatmap_rationale = f", Heatmap=10.0/10 (Global #1 Peak {top_pk.intensity*100:.0f}%)"
                 elif top_pk.classification == "SPIKE_PAYOFF":
-                    heatmap_score = min(top_pk.intensity * 9.0 + top_pk.prominence * 4.0, 9.5)
+                    heatmap_score = min(top_pk.intensity * 9.0 + top_pk.prominence * 6.0, 9.8)
                     heatmap_rationale = f", Heatmap={heatmap_score:.1f}/10 (Replay Spike {top_pk.intensity*100:.0f}%)"
                 else:
-                    heatmap_score = min(top_pk.intensity * 8.5, 8.5)
+                    heatmap_score = min(top_pk.intensity * 9.0 + top_pk.prominence * 5.0, 9.2)
                     heatmap_rationale = f", Heatmap={heatmap_score:.1f}/10 (Engagement Wave {top_pk.intensity*100:.0f}%)"
             elif heatmap.points:
                 pts = [p.value for p in heatmap.points if p.end_time >= w_start and p.start_time <= w_end]
@@ -350,7 +400,8 @@ class ArcDetector:
 
         composite = breakdown.compute_composite_score()
 
-        cid = f"cand-arc-{transcript.video_id}-{uuid.uuid4().hex[:8]}"
+        cid = f"cand-arc-{transcript.video_id}-{int(w_start*10)}_{int(w_dur*10)}"
+        full_text = " ".join(s.text for s in arc_sentences).strip()
         return HighlightCandidate(
             candidate_id=cid,
             video_id=transcript.video_id,
@@ -399,17 +450,21 @@ class ArcDetector:
         if len(words) <= 10:
             score += 1.0
 
+        # Weak dangling opener penalty or contrast hook boost (mitigated by acoustic pause boundary)
+        is_they_hook = (first_word == "they" and any(lower.startswith(th) for th in PROVOCATIVE_THEY_HOOKS))
+        is_but_hook = (first_word == "but" and any(lower.startswith(bh) for bh in CONTRAST_BUT_HOOKS))
+
         # Sentence type boost
         if sent.sentence_type == HOOK:
             score += 1.5
         elif sent.sentence_type == REVELATION:
             score += 1.0
+        elif sent.sentence_type == ESCALATION and is_but_hook:
+            score += 1.5
 
-        # Weak dangling opener penalty (mitigated by acoustic pause boundary)
-        is_they_hook = (first_word == "they" and any(lower.startswith(th) for th in PROVOCATIVE_THEY_HOOKS))
-        is_but_hook = (first_word == "but" and any(lower.startswith(bh) for bh in CONTRAST_BUT_HOOKS))
-
-        if first_word in WEAK_OPENERS and not is_but_hook:
+        if is_but_hook:
+            score += 1.5
+        elif first_word in WEAK_OPENERS:
             score -= 1.0 if has_pause_boundary else 3.0
         elif first_word == "they" and not is_they_hook:
             score -= 1.0 if has_pause_boundary else 2.5
@@ -458,7 +513,40 @@ class ArcDetector:
 
         return max(1.0, min(10.0, score))
 
-    def _score_arc_completeness(self, sentences: List[ClassifiedSentence]) -> float:
+    def _compute_contextual_payoff_bonus(
+        self,
+        hook: ClassifiedSentence,
+        payoff: ClassifiedSentence,
+        h_words: Optional[Set[str]] = None,
+        p_words: Optional[Set[str]] = None,
+    ) -> float:
+        """Computes contextual payoff bonus when ending resolves opening hook or question."""
+        bonus = 0.0
+        h_text = hook.text.strip().lower()
+        p_text = payoff.text.strip().lower()
+
+        # Hook is a question or premise and payoff provides answer or resolution
+        if h_text.endswith("?") or any(h_text.startswith(q) for q in ("why", "how", "what", "is", "can", "could")):
+            if any(m in p_text for m in ("turns out", "the reason", "because", "actually", "the answer", "real reason", "in fact", "premature")):
+                bonus += 1.5
+            elif payoff.sentence_type in (PAYOFF, REVELATION):
+                bonus += 1.0
+
+        # Lexical or thematic overlap
+        if h_words is None:
+            h_words = {w for w in h_text.replace("?", "").replace(".", "").split() if len(w) > 3}
+        if p_words is None:
+            p_words = {w for w in p_text.replace("?", "").replace(".", "").split() if len(w) > 3}
+        if len(h_words & p_words) >= 1:
+            bonus += 0.5
+
+        return min(3.0, bonus)
+
+    def _score_arc_completeness(
+        self,
+        sentences: List[ClassifiedSentence],
+        precomputed_types: Optional[List[str]] = None,
+    ) -> float:
         """Evaluates narrative structure: setup -> escalation -> payoff (0.0 to 10.0)."""
         score = 6.0
         if sentences:
@@ -469,7 +557,7 @@ class ArcDetector:
             if last_text and last_text.endswith((".", "!", "?")):
                 score += 1.0
 
-        types = [s.sentence_type for s in sentences]
+        types = precomputed_types if precomputed_types is not None else [s.sentence_type for s in sentences]
 
         # Contains escalation / tension
         if ESCALATION in types:
@@ -499,13 +587,11 @@ class ArcDetector:
         total_dur: float,
         cadence_scorer: Optional[AdaptiveCadenceScorer] = None,
         num_words: Optional[int] = None,
+        has_words: Optional[bool] = None,
     ) -> float:
         """Evaluates pacing, tempo variance, and dramatic pauses (0.0 to 10.0)."""
-        all_words: List[WordTimestamp] = []
-        for s in sentences:
-            if s.words:
-                all_words.extend(s.words)
-
+        words_present = has_words if has_words is not None else any(s.words for s in sentences)
+        all_words: List[WordTimestamp] = [w for s in sentences for w in s.words] if words_present else []
         if cadence_scorer and cadence_scorer.is_available and all_words:
             base_score = cadence_scorer.score_cadence(
                 words=all_words,

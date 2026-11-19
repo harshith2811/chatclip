@@ -591,9 +591,11 @@ class DeadAirPruner:
         self,
         keep_intervals: List[Tuple[float, float]],
         offset_seconds: float = 0.0,
+        fps: Optional[float] = None,
     ) -> Tuple[str, str]:
         """
         Returns (video_select_expr, audio_select_expr) with timestamps shifted by offset_seconds.
+        Supports optional CFR fps normalization to prevent VFR audio/video drift.
         """
         if not keep_intervals:
             return "", ""
@@ -603,7 +605,8 @@ class DeadAirPruner:
             for s, e in keep_intervals
         ]
         combined_expr = "+".join(expr_terms)
-        video_expr = f"select='{combined_expr}',setpts=N/FRAME_RATE/TB"
+        fps_filter = f"fps=fps={fps:.2f}," if fps else ""
+        video_expr = f"{fps_filter}select='{combined_expr}',setpts=N/FRAME_RATE/TB"
         audio_expr = f"aselect='{combined_expr}',asetpts=N/SR/TB"
         return video_expr, audio_expr
 
@@ -615,6 +618,7 @@ class DeadAirPruner:
         video_out_label: str = "v_cut",
         audio_in_label: str = "0:a",
         audio_out_label: str = "a_cut",
+        fps: Optional[float] = None,
     ) -> str:
         """
         Generates FFmpeg select filter expression for micro-jump-cuts.
@@ -624,5 +628,5 @@ class DeadAirPruner:
         if not keep_intervals:
             return ""
 
-        v_filter, a_filter = self.generate_select_expressions(keep_intervals, offset_seconds)
+        v_filter, a_filter = self.generate_select_expressions(keep_intervals, offset_seconds, fps=fps)
         return f"[{video_in_label}]{v_filter}[{video_out_label}];[{audio_in_label}]{a_filter}[{audio_out_label}]"

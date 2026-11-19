@@ -63,6 +63,15 @@ class AppConfig:
     log_level: str = "INFO"
     execution_mode: str = "production"  # "production", "development", "testing"
 
+    # Security, Rights & AI Governance
+    environment: str = "development"  # "development", "production", "staging"
+    compliance_profile: str = "REVIEW_REQUIRED"  # "STRICT_LICENSED", "REVIEW_REQUIRED", "COMMENTARY_REVIEW"
+    legal_officer: bool = True  # False disables copyright/rights/attribution/audio-risk/commentary gates
+    web_studio_api_key: Optional[str] = None
+    cors_allowed_origins: str = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000"
+    gemini_api_key: Optional[str] = None
+    gemini_model: str = "gemini-2.5-flash"
+
     def __post_init__(self):
         # Create directories
         for d in [
@@ -126,6 +135,13 @@ class AppConfig:
             "RETENTION_DAYS": "retention_days",
             "LOG_LEVEL": "log_level",
             "EXECUTION_MODE": "execution_mode",
+            "ENVIRONMENT": "environment",
+            "COMPLIANCE_PROFILE": "compliance_profile",
+            "LEGAL_OFFICER": "legal_officer",
+            "WEB_STUDIO_API_KEY": "web_studio_api_key",
+            "CORS_ALLOWED_ORIGINS": "cors_allowed_origins",
+            "GEMINI_API_KEY": "gemini_api_key",
+            "GEMINI_MODEL": "gemini_model",
         }
 
         for env_k, attr_name in env_map.items():
@@ -167,6 +183,12 @@ class AppConfig:
         if self.subtitle_style not in ("classic", "clean_editorial", "karaoke", "bold_social"):
             warnings.append(f"Unknown subtitle_style '{self.subtitle_style}', will fall back to bold_social.")
 
+        if self.compliance_profile not in ("STRICT_LICENSED", "REVIEW_REQUIRED", "COMMENTARY_REVIEW"):
+            issues.append(
+                f"Invalid compliance_profile: '{self.compliance_profile}'. "
+                "Must be STRICT_LICENSED, REVIEW_REQUIRED, or COMMENTARY_REVIEW."
+            )
+
         if not self.youtube_api_key:
             warnings.append("YOUTUBE_API_KEY is not set. Data API queries will fail or fall back to RSS/Atom feeds.")
 
@@ -187,12 +209,18 @@ class AppConfig:
 
         return {
             "execution_mode": self.execution_mode,
+            "environment": self.environment,
+            "compliance_profile": self.compliance_profile,
+            "legal_officer": self.legal_officer,
             "assets_dir": self.assets_dir,
             "output_dir": self.output_dir,
             "db_path": self.db_path,
             "autopost_mode": self.autopost_mode,
             "autopost_webhook_url": self.autopost_webhook_url or "<none>",
             "autopost_auth_token": mask(self.autopost_auth_token),
+            "web_studio_api_key": mask(self.web_studio_api_key),
+            "gemini_api_key": mask(self.gemini_api_key),
+            "gemini_model": self.gemini_model,
             "youtube_api_key": mask(self.youtube_api_key),
             "transcription_provider": self.transcription_provider,
             "transcription_model": self.transcription_model,
@@ -215,3 +243,20 @@ class AppConfig:
     def validate_environment(self) -> List[str]:
         val = self.validate()
         return val["issues"] + val["warnings"]
+
+
+def is_legal_officer_enabled(config: Optional[AppConfig] = None) -> bool:
+    """
+    Master boolean toggle controlling copyright/rights/creator/attribution/audio-risk/commentary enforcement.
+    Defaults to True when LEGAL_OFFICER is unset; False disables legal compliance blocks everywhere
+    while keeping technical security/reliability checks (API auth, SSRF, SHA-256, FFmpeg QA, OUTCOME_UNKNOWN).
+    """
+    if config is not None and hasattr(config, "legal_officer"):
+        return bool(config.legal_officer)
+    raw = os.getenv("LEGAL_OFFICER")
+    if raw is None or not str(raw).strip():
+        return True
+    return str(raw).strip().lower() not in ("false", "0", "no", "off")
+
+
+legal_officer_enabled = is_legal_officer_enabled

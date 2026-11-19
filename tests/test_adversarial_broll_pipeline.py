@@ -568,17 +568,28 @@ def test_pipeline_heavy_deadair_exact_duration_synchronization(tmp_path):
     manifest = RightsManifest(
         rights_id=f"rights-{video_id}",
         video_id=video_id,
-        basis=RightsBasis.OPERATOR_ASSET,
+        basis=RightsBasis.OWNED,
         status=RightsStatus.VERIFIED,
         owner_name="Testing Studio",
+        proof_reference="test-fixture-owned",
         audit_notes="Adversarial dead-air test.",
     )
     env["rights_policy"].register_rights(manifest)
 
-    # Register dummy media asset
+    # Generate valid real 35s MP4 media so FFmpeg dead-air cutting runs authentically
     media_path = os.path.join(env["assets_dir"], f"{video_id}.mp4")
-    with open(media_path, "wb") as f:
-        f.write(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41" + (b"\x00" * 8192))
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", "testsrc=duration=35:size=320x240:rate=30",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=35",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "40", "-c:a", "aac",
+            media_path,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
     env["asset_provider"].register_asset_path(video_id, media_path)
 
     # 35s transcript with three 2.5s dead air gaps
@@ -684,9 +695,10 @@ def test_pipeline_zero_deadair_exact_duration_synchronization(tmp_path):
     manifest = RightsManifest(
         rights_id=f"rights-{video_id}",
         video_id=video_id,
-        basis=RightsBasis.OPERATOR_ASSET,
+        basis=RightsBasis.OWNED,
         status=RightsStatus.VERIFIED,
         owner_name="Testing Studio",
+        proof_reference="test-fixture-owned",
         audit_notes="Zero dead-air test.",
     )
     env["rights_policy"].register_rights(manifest)
@@ -808,9 +820,10 @@ def test_real_media_deadair_pruning_and_qa_verification(tmp_path):
     manifest = RightsManifest(
         rights_id=f"rights-{video_id}",
         video_id=video_id,
-        basis=RightsBasis.OPERATOR_ASSET,
+        basis=RightsBasis.OWNED,
         status=RightsStatus.VERIFIED,
         owner_name="Real Media Studio",
+        proof_reference="test-fixture-owned",
         audit_notes="Real media dead-air test.",
     )
     env["rights_policy"].register_rights(manifest)

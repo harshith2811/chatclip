@@ -306,15 +306,33 @@ class ContextAwareSegmenter(HighlightDetector):
                     ]
                     full_pk_text = " ".join(matching_texts).strip()
                     first_line = matching_texts[0].strip() if matching_texts else f"Peak Moment at {pk_start:.0f}s"
+                    # Real hook evaluation on peak candidate
+                    h_val = 7.5
+                    p_val = 7.5
+                    try:
+                        from .arc_detector import ArcDetector
+                        from .sentence_classifier import ClassifiedSentence
+                        matching_segs = [s for s in raw_segments if s.end >= pk_start and s.start <= pk_end]
+                        if matching_segs:
+                            if self._arc_detector is None:
+                                self._arc_detector = ArcDetector(default_min_duration=self.default_min_duration, default_max_duration=self.default_max_duration)
+                            start_cs = ClassifiedSentence(text=matching_segs[0].text, start=matching_segs[0].start, end=matching_segs[0].end)
+                            h_val = self._arc_detector._score_hook_strength(start_cs, has_pause_boundary=True)
+                            end_cs = ClassifiedSentence(text=matching_segs[-1].text, start=matching_segs[-1].start, end=matching_segs[-1].end)
+                            p_val = self._arc_detector._score_payoff_resolution(end_cs)
+                    except Exception:
+                        pass
+
+                    hm_val = 10.0 if pk.classification == "GLOBAL_MAXIMA" else min(pk.intensity * 9.5 + pk.prominence * 2.0, 9.8)
                     cid = f"cand-peak-{transcript.video_id}-{pk.peak_id}"
                     breakdown = ScoreBreakdown(
-                        hook_score=6.0,
-                        moment_score=7.0,
-                        coherence_score=7.0,
-                        pacing_score=6.0,
-                        heatmap_score=min(pk.intensity * 10.0, 10.0),
-                        confidence=0.85,
-                        rationale=f"Audience replay peak [{pk.classification}] intensity {pk.intensity*100:.0f}%.",
+                        hook_score=round(h_val, 1),
+                        moment_score=round(p_val, 1),
+                        coherence_score=9.0,
+                        pacing_score=8.0,
+                        heatmap_score=round(hm_val, 1),
+                        confidence=0.92,
+                        rationale=f"Audience replay peak [{pk.classification}] intensity {pk.intensity*100:.0f}%, Hook={h_val:.1f}/10.",
                     )
                     cand = HighlightCandidate(
                         candidate_id=cid,

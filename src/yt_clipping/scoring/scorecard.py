@@ -288,8 +288,22 @@ class ExplainableScorecardScorer(HighlightScorer):
 
         composite_score = breakdown.compute_composite_score()
         candidate.breakdown = breakdown
-        candidate.score = composite_score
         candidate.rationale = breakdown.rationale
+
+        # Apply empirical feedback loop calibration if historical performance data is active
+        try:
+            from ..analytics.feedback_loop import get_feedback_loop
+            hook_type = getattr(candidate, "hook_type", "General") or "General"
+            calibrated_score, multiplier, cal_rationale = get_feedback_loop().calibrate_candidate_score(
+                base_score=composite_score,
+                hook_type=hook_type,
+                duration_seconds=candidate.duration_seconds,
+            )
+            candidate.score = calibrated_score
+            if multiplier != 1.0:
+                candidate.rationale = f"{candidate.rationale} [{cal_rationale}]"
+        except Exception:
+            candidate.score = composite_score
 
         return candidate
 

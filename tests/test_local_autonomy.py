@@ -127,9 +127,10 @@ def test_end_to_end_pipeline_zero_cloud_dependency(tmp_path):
         RightsManifest(
             rights_id=f"rights-{video_id}",
             video_id=video_id,
-            basis=RightsBasis.OPERATOR_ASSET,
+            basis=RightsBasis.OWNED,
             status=RightsStatus.VERIFIED,
             owner_name="Local Creator",
+            proof_reference="test-fixture-owned",
         )
     )
 

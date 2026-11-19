@@ -8,8 +8,13 @@ audio ducking to overlay voiceover narrations onto video clips.
 from typing import Optional, Dict, Any, List
 import os
 import asyncio
+import concurrent.futures
+import logging
 import subprocess
 import shutil
+from ..utils.file_ops import safe_remove
+
+logger = logging.getLogger(__name__)
 
 
 class TTSEngine:
@@ -69,25 +74,21 @@ class TTSEngine:
                 await communicate.save(output_path)
 
             try:
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
 
-                if loop and loop.is_running():
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        pool.submit(lambda: asyncio.run(_run_edge())).result(timeout=25)
-                else:
-                    asyncio.run(_run_edge())
-            except Exception:
+            if loop and loop.is_running():
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(lambda: asyncio.run(_run_edge())).result(timeout=25)
+            else:
                 asyncio.run(_run_edge())
 
             if os.path.exists(output_path) and os.path.getsize(output_path) > 100:
                 return os.path.abspath(output_path)
 
         except Exception as edge_err:
-            pass
+            logger.debug("Edge-TTS synthesis unavailable: %s", edge_err)
 
         # 2. Offline fallback: pyttsx3 (SAPI5 / Windows Speech Engine)
         try:
@@ -106,9 +107,9 @@ class TTSEngine:
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         check=True,
+                        timeout=30,
                     )
-                    if os.path.exists(wav_output):
-                        os.remove(wav_output)
+                    safe_remove(wav_output)
                 return os.path.abspath(output_path)
         except Exception as pyttsx_err:
             pass
@@ -122,7 +123,7 @@ class TTSEngine:
                 "-c:a", "libmp3lame" if output_path.endswith(".mp3") else "pcm_s16le",
                 output_path,
             ]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=30)
             if os.path.exists(output_path) and os.path.getsize(output_path) > 100:
                 return os.path.abspath(output_path)
         except Exception:
@@ -173,7 +174,7 @@ class TTSEngine:
             "-y",
         ]
 
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
         if res.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             raise RuntimeError(f"FFmpeg narration overlay failed: {res.stderr[-400:]}")
 

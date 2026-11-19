@@ -297,7 +297,7 @@ class PingerDaemon:
         )
 
         # 3. Build Attribution Package
-        policy = CreatorPolicy(policy_str) if policy_str in CreatorPolicy._value2member_map_ else CreatorPolicy.OPEN_AFFILIATE
+        policy = CreatorPolicy(policy_str) if policy_str in CreatorPolicy._value2member_map_ else CreatorPolicy.REVIEW_REQUIRED
         attr_pkg = self.attribution_engine.format_attribution(
             video_id=v_id,
             creator_name=author,

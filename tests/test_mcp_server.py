@@ -208,9 +208,10 @@ def test_tool_verify_source_rights(temp_workspace):
     manifest = RightsManifest(
         rights_id="rights-test-vid-1",
         video_id="test_vid_123",
-        basis=RightsBasis.OPERATOR_ASSET,
+        basis=RightsBasis.OWNED,
         status=RightsStatus.VERIFIED,
         owner_name="Test Creator",
+        proof_reference="test-fixture-owned",
         audit_notes="Verified via test",
     )
     policy.register_rights(manifest)

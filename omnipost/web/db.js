@@ -25,7 +25,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.OMNIPOST_DATA_DIR
+  ? path.resolve(process.env.OMNIPOST_DATA_DIR)
+  : path.join(__dirname, 'data');
 const SUBMISSIONS_FILE = path.join(DATA_DIR, 'submissions.json');
 const POSTS_FILE = path.join(DATA_DIR, 'posts.json');
 
@@ -197,7 +199,9 @@ function writeJsonArray(file, list, label) {
     const cleanList = Array.isArray(list)
       ? list.filter(item => item !== null && typeof item === 'object' && !Array.isArray(item))
       : [];
-    fs.writeFileSync(file, JSON.stringify(cleanList, null, 2), 'utf8');
+    const tmpFile = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2, 8)}.tmp`;
+    fs.writeFileSync(tmpFile, JSON.stringify(cleanList, null, 2), 'utf8');
+    fs.renameSync(tmpFile, file);
   } catch (err) {
     console.warn(`[Database] Error writing local ${label}:`, err.message);
   }

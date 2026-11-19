@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 from ..contracts.models import HighlightCandidate, Transcript, WordTimestamp
 from ..scoring.packaging_linter import GENERIC_STOP_WORDS, LAZY_ADJECTIVES_MAP
 from ..detection.deadair import STANDALONE_FILLER_WORDS
+from .encoder_config import get_encoder_args, is_nvenc
+from ..utils.file_ops import atomic_replace, safe_remove
 
 # Common conversational English stop words to filter during keyword extraction
 EXTRA_STOP_WORDS: Set[str] = {
@@ -254,17 +256,23 @@ class BRollOverlayEngine:
 
         best_score = 0
         best_asset = None
+        stop_tokens = {"mp4", "mov", "mkv", "webm", "m4v", "avi", "png", "jpg", "jpeg", "webp", "clip", "video", "asset", "broll"}
 
         for path in media_files:
             rel = os.path.relpath(path, search_dir)
-            tokens = set(re.findall(r"[a-zA-Z0-9]{2,}", rel.lower()))
+            tokens = set(re.findall(r"[a-zA-Z0-9]{2,}", rel.lower())) - stop_tokens
 
             score = 0
             for kw in keywords:
                 kw_lower = kw.lower()
+                if len(kw_lower) < 2:
+                    continue
                 if kw_lower in tokens:
                     score += 3
-                elif any(kw_lower in tok or tok in kw_lower for tok in tokens):
+                elif any(
+                    (len(tok) >= 2 and len(kw_lower) >= 2 and (tok.startswith(kw_lower) or kw_lower.startswith(tok)))
+                    for tok in tokens
+                ):
                     score += 1
 
             if score > best_score:
@@ -447,23 +455,28 @@ class BRollOverlayEngine:
 
         cmd.extend(["-filter_complex", filtergraph])
         cmd.extend(output_maps)
-        cmd.extend([
-            "-c:v", self.config.vcodec,
-            "-crf", str(self.config.crf),
-            "-preset", "fast",
-        ])
+        codec_args = get_encoder_args(self.config.vcodec, self.config.crf)
+        cmd.extend(codec_args)
 
         if self.config.mute_broll:
             cmd.extend(["-c:a", "copy"])
         else:
             cmd.extend(["-c:a", "aac", "-b:a", "192k"])
 
-        cmd.append(tmp_out)
+        cmd.extend(["-shortest", tmp_out])
 
         try:
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
+            if res.returncode != 0 and is_nvenc(self.config.vcodec):
+                # Fallback to libx264
+                cpu_args = get_encoder_args("libx264", self.config.crf)
+                cmd_cpu = [c for c in cmd if c not in codec_args]
+                out_idx = cmd_cpu.index(tmp_out)
+                cmd_cpu[out_idx:out_idx] = cpu_args
+                res = subprocess.run(cmd_cpu, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
+
             if res.returncode == 0 and os.path.exists(tmp_out) and os.path.getsize(tmp_out) > 0:
-                os.replace(tmp_out, output_path)
+                atomic_replace(tmp_out, output_path)
                 sha256 = _compute_sha256(output_path)
                 return BRollOverlayResult(
                     applied=True,
@@ -476,11 +489,7 @@ class BRollOverlayEngine:
                     telemetry={"num_overlays": len(broll_inputs), "status": "COMPLETED"},
                 )
             else:
-                if os.path.exists(tmp_out):
-                    try:
-                        os.remove(tmp_out)
-                    except OSError:
-                        pass
+                safe_remove(tmp_out)
                 return BRollOverlayResult(
                     applied=False,
                     input_video_path=video_path,
@@ -491,11 +500,7 @@ class BRollOverlayEngine:
                     telemetry={"error": f"FFmpeg failed with code {res.returncode}", "stderr": res.stderr[-500:] if res.stderr else ""},
                 )
         except Exception as e:
-            if os.path.exists(tmp_out):
-                try:
-                    os.remove(tmp_out)
-                except OSError:
-                    pass
+            safe_remove(tmp_out)
             return BRollOverlayResult(
                 applied=False,
                 input_video_path=video_path,
@@ -566,18 +571,15 @@ class BRollOverlayEngine:
 
         cmd.extend(["-filter_complex", filtergraph])
         cmd.extend(output_maps)
-        cmd.extend([
-            "-c:v", self.config.vcodec,
-            "-crf", str(self.config.crf),
-            "-preset", "fast",
-        ])
+        codec_args = get_encoder_args(self.config.vcodec, self.config.crf)
+        cmd.extend(codec_args)
 
         if self.config.mute_broll:
             cmd.extend(["-c:a", "copy"])
         else:
             cmd.extend(["-c:a", "aac", "-b:a", "192k"])
 
-        cmd.append(tmp_out)
+        cmd.extend(["-shortest", tmp_out])
 
         def _execute_ffmpeg(command):
             return subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
@@ -585,13 +587,16 @@ class BRollOverlayEngine:
         try:
             res = _execute_ffmpeg(cmd)
             # Graceful CPU fallback if hardware encoder failed
-            if res.returncode != 0 and self.config.vcodec == "h264_nvenc":
+            if res.returncode != 0 and is_nvenc(self.config.vcodec):
                 logger.warning("NVENC failed during explicit overlay; retrying with libx264.")
-                cmd_cpu = [c if c != "h264_nvenc" else "libx264" for c in cmd]
+                cpu_args = get_encoder_args("libx264", self.config.crf)
+                cmd_cpu = [c for c in cmd if c not in codec_args]
+                out_idx = cmd_cpu.index(tmp_out)
+                cmd_cpu[out_idx:out_idx] = cpu_args
                 res = _execute_ffmpeg(cmd_cpu)
 
             if res.returncode == 0 and os.path.exists(tmp_out) and os.path.getsize(tmp_out) > 0:
-                os.replace(tmp_out, output_path)
+                atomic_replace(tmp_out, output_path)
                 sha256 = _compute_sha256(output_path)
                 return BRollOverlayResult(
                     applied=True,
@@ -604,11 +609,7 @@ class BRollOverlayEngine:
                     telemetry={"num_overlays": 1, "type": "strategic_visual_intervention", "status": "COMPLETED"},
                 )
             else:
-                if os.path.exists(tmp_out):
-                    try:
-                        os.remove(tmp_out)
-                    except OSError:
-                        pass
+                safe_remove(tmp_out)
                 return BRollOverlayResult(
                     applied=False,
                     input_video_path=video_path,
@@ -619,11 +620,7 @@ class BRollOverlayEngine:
                     telemetry={"error": f"FFmpeg failed with code {res.returncode}", "stderr": res.stderr[-500:] if res.stderr else ""},
                 )
         except Exception as e:
-            if os.path.exists(tmp_out):
-                try:
-                    os.remove(tmp_out)
-                except OSError:
-                    pass
+            safe_remove(tmp_out)
             return BRollOverlayResult(
                 applied=False,
                 input_video_path=video_path,

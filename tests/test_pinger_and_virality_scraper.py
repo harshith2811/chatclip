@@ -267,7 +267,7 @@ class TestAttributionEngine:
             "Visit betterhelp.com/huberman for 10% off therapy.\n"
             "00:00 Introduction\n02:30 Dopamine Dynamics"
         )
-        cleaned, has_sponsor, found_keywords = engine.purge_sponsor_segments(raw_description)
+        cleaned, has_sponsor, found_keywords = engine.purge_sponsor_segments(raw_description, authorized=True)
         assert has_sponsor is True
         assert "nordvpn" not in cleaned.lower()
         assert "displate" not in cleaned.lower()
@@ -277,13 +277,14 @@ class TestAttributionEngine:
     def test_creator_policy_classification_and_dmca_skip(self, temp_db):
         engine = AttributionEngine(db_path=temp_db)
         
-        # Test 1: Open Affiliate creator
+        # Test 1: Open Affiliate creator (requires explicit approval evidence)
         engine.set_creator_policy(
             channel_id="UC_open",
             channel_name="Open Creator",
             creator_handle="@open_creator",
             policy=CreatorPolicy.OPEN_AFFILIATE,
             notes="Open clipping permitted",
+            approval_evidence="test-partner-agreement-uc-open",
         )
         pkg_open = engine.format_attribution(
             video_id="vid1",
@@ -360,12 +361,13 @@ class TestPingerDaemon:
     def test_process_video_delta_queuing_viral_upload(self, temp_db):
         daemon = PingerDaemon(db_path=temp_db)
         
-        # Ensure creator policy is open
+        # Ensure creator policy is approved with evidence
         daemon.attribution_engine.set_creator_policy(
             channel_id="UC_x5XG1OV2P6uZZ5FSM9Ttw",
             channel_name="Google Developers",
             creator_handle="@GoogleDevelopers",
             policy=CreatorPolicy.OPEN_AFFILIATE,
+            approval_evidence="test-partner-agreement-google-dev",
         )
 
         # Mock metrics to simulate a viral explosion upload (50,000 views in 1 hour)
@@ -423,6 +425,7 @@ class TestChannelWatcher:
             identifier="UC_test12345",
             baseline_views=25000.0,
             policy=CreatorPolicy.OPEN_AFFILIATE,
+            approval_evidence="test-partner-agreement-crud",
         )
         assert res["channel_id"] == "UC_test12345"
 

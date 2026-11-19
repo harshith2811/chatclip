@@ -13,11 +13,22 @@ import json
 import logging
 import hashlib
 import glob
+import re
+import shutil
 
 from ..discovery.video_metadata import EnrichedVideoInfo
 from ..scoring.caption_synthesizer import ShortCaptionPackage, ClipIntelligence
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_filesystem_name(name: str, max_length: int = 40) -> str:
+    """Produces clean, alphanumeric filesystem names without spaces, emojis, or illegal symbols."""
+    if not name:
+        return "video"
+    cleaned = re.sub(r"[^\w\s-]", "", name)
+    cleaned = re.sub(r"[\s-]+", "_", cleaned).strip("_")
+    return cleaned[:max_length] if cleaned else "video"
 
 
 @dataclass
@@ -92,9 +103,28 @@ class ProjectStore:
         os.makedirs(self.projects_dir, exist_ok=True)
         os.makedirs(self.rendered_clips_dir, exist_ok=True)
 
-    def get_project_dir(self, project_id: str) -> str:
-        clean_name = project_id if project_id.startswith("project_") else f"project_{project_id}"
-        pdir = os.path.join(self.projects_dir, clean_name)
+    def get_project_dir(self, identifier: str, title: Optional[str] = None) -> str:
+        """
+        Resolves or creates the structured project folder:
+        data/projects/{Clean_Title}_{video_id}
+        Matches existing directories by video_id, clean name, or title.
+        """
+        clean_id = identifier.replace("project_", "").replace("proj_", "")
+
+        # 1. Check if an existing directory matches this video_id
+        if os.path.exists(self.projects_dir):
+            for d in os.listdir(self.projects_dir):
+                full_d = os.path.join(self.projects_dir, d)
+                if not os.path.isdir(full_d):
+                    continue
+                if d == identifier or d == clean_id or d == f"proj_{clean_id}" or d.endswith(f"_{clean_id}") or f"_{clean_id}_" in d:
+                    os.makedirs(os.path.join(full_d, "clips"), exist_ok=True)
+                    return full_d
+
+        # 2. If new directory, construct structured folder name: {clean_title}_{clean_id}
+        folder_title = sanitize_filesystem_name(title) if title else "Project"
+        folder_name = f"{folder_title}_{clean_id}"
+        pdir = os.path.join(self.projects_dir, folder_name)
         os.makedirs(pdir, exist_ok=True)
         os.makedirs(os.path.join(pdir, "clips"), exist_ok=True)
         return pdir
@@ -105,8 +135,10 @@ class ProjectStore:
         source_metadata: Optional[EnrichedVideoInfo] = None,
     ) -> ProjectRecord:
         """Finds an existing project for a video_id or instantiates a new one."""
-        project_id = f"proj_{video_id}"
-        project_path = os.path.join(self.get_project_dir(project_id), "project.json")
+        clean_vid = video_id.replace("project_", "").replace("proj_", "")
+        title = source_metadata.title if source_metadata else f"Project {clean_vid}"
+        project_dir = self.get_project_dir(clean_vid, title=title)
+        project_path = os.path.join(project_dir, "project.json")
 
         if os.path.exists(project_path):
             try:
@@ -116,70 +148,86 @@ class ProjectStore:
             except Exception as e:
                 logger.warning(f"Corrupted project file {project_path}: {e}. Rebuilding...")
 
-        title = source_metadata.title if source_metadata else f"Project {video_id}"
         canonical_url = (
             source_metadata.canonical_url
             if source_metadata
-            else f"https://www.youtube.com/watch?v={video_id}"
+            else f"https://www.youtube.com/watch?v={clean_vid}"
         )
-        meta_dict = source_metadata.to_dict() if source_metadata else {"video_id": video_id}
+        meta_dict = source_metadata.to_dict() if source_metadata else {"video_id": clean_vid}
 
         proj = ProjectRecord(
-            project_id=project_id,
-            video_id=video_id,
+            project_id=f"proj_{clean_vid}",
+            video_id=clean_vid,
             title=title,
             canonical_url=canonical_url,
             source_metadata=meta_dict,
         )
         self.save_project(proj)
+
+        # Link source video from data/assets if present
+        assets_dir = os.path.join(self.base_data_dir, "assets")
+        src_asset = os.path.join(assets_dir, f"{clean_vid}.mp4")
+        proj_source = os.path.join(project_dir, "source.mp4")
+        if os.path.exists(src_asset) and not os.path.exists(proj_source):
+            try:
+                try:
+                    os.link(src_asset, proj_source)
+                except Exception:
+                    shutil.copyfile(src_asset, proj_source)
+            except Exception:
+                pass
+
         return proj
 
     def save_project(self, project: ProjectRecord) -> None:
         """Atomically persists project.json."""
         project.updated_at = datetime.now(timezone.utc).isoformat()
-        pdir = self.get_project_dir(project.project_id)
+        pdir = self.get_project_dir(project.video_id or project.project_id, title=project.title)
         path = os.path.join(pdir, "project.json")
         self._write_json_atomic(path, project.to_dict())
 
     def get_project(self, project_id: str) -> Optional[ProjectRecord]:
-        """Loads a project record from disk, matching direct or prefixed project directories."""
-        clean_id = project_id
-        if clean_id.startswith("project_"):
-            clean_id = clean_id[8:]
-        if clean_id.startswith("proj_"):
-            clean_id = clean_id[5:]
+        """Loads a project record from disk, matching direct, titled, or prefixed project directories."""
+        clean_id = project_id.replace("project_", "").replace("proj_", "")
 
-        candidate_dirs = [
-            os.path.join(self.projects_dir, project_id),
-            os.path.join(self.projects_dir, f"project_{project_id}"),
-            os.path.join(self.projects_dir, f"project_proj_{clean_id}"),
-            os.path.join(self.projects_dir, f"project_{clean_id}"),
-            os.path.join(self.projects_dir, f"proj_{clean_id}"),
-        ]
-        target_dir = next((d for d in candidate_dirs if os.path.isdir(d)), None)
-        if not target_dir:
-            return None
+        # Try resolving directory directly
+        pdir = self.get_project_dir(clean_id)
+        path = os.path.join(pdir, "project.json")
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return ProjectRecord.from_dict(json.load(f))
+            except Exception as e:
+                logger.error(f"Failed to read project {path}: {e}")
 
-        path = os.path.join(target_dir, "project.json")
-        if not os.path.exists(path):
-            return None
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return ProjectRecord.from_dict(json.load(f))
-        except Exception as e:
-            logger.error(f"Failed to read project {path}: {e}")
-            return None
+        # Fallback candidate search
+        if os.path.exists(self.projects_dir):
+            for d in os.listdir(self.projects_dir):
+                if d == project_id or d == clean_id or d.endswith(f"_{clean_id}"):
+                    cpath = os.path.join(self.projects_dir, d, "project.json")
+                    if os.path.exists(cpath):
+                        try:
+                            with open(cpath, "r", encoding="utf-8") as f:
+                                return ProjectRecord.from_dict(json.load(f))
+                        except Exception:
+                            pass
+        return None
 
     def list_projects(self) -> List[ProjectRecord]:
         """Lists all projects ordered by most recent update."""
         projects = []
-        for pdir in glob.glob(os.path.join(self.projects_dir, "project_*")):
+        if not os.path.exists(self.projects_dir):
+            return []
+
+        for d in os.listdir(self.projects_dir):
+            pdir = os.path.join(self.projects_dir, d)
+            if not os.path.isdir(pdir):
+                continue
             proj_file = os.path.join(pdir, "project.json")
             if os.path.exists(proj_file):
                 try:
                     with open(proj_file, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                    # Recompute actual clips count
                     clips_dir = os.path.join(pdir, "clips")
                     actual_count = len(glob.glob(os.path.join(clips_dir, "*.json")))
                     data["clips_count"] = actual_count
@@ -192,15 +240,51 @@ class ProjectStore:
 
     def save_clip_sidecar(self, sidecar: ClipSidecarRecord) -> str:
         """
-        Atomically saves the sidecar JSON file.
-        Writes to project clips dir and links/mirrors in rendered_clips_dir.
+        Atomically saves the sidecar JSON file and ensures the MP4 is stored
+        in the project's structured clips folder with a descriptive human-readable name,
+        while maintaining mirrors for backward compatibility.
         """
         pdir = self.get_project_dir(sidecar.project_id)
-        base_cid = sidecar.clip_id[5:] if sidecar.clip_id.startswith("clip_") else sidecar.clip_id
-        sidecar_path = os.path.join(pdir, "clips", f"clip_{base_cid}.json")
+        clips_dir = os.path.join(pdir, "clips")
+        os.makedirs(clips_dir, exist_ok=True)
+
+        hook_title = (
+            sidecar.caption_package.get("hook_title")
+            or sidecar.candidate_data.get("hook_title")
+            or sidecar.clip_id
+        )
+        clean_hook = sanitize_filesystem_name(hook_title, max_length=40)
+        start_s = round(sidecar.start_seconds)
+        end_s = round(sidecar.end_seconds)
+
+        existing_clips = len(glob.glob(os.path.join(clips_dir, "*.json"))) + 1
+        descriptive_base = f"{existing_clips:02d}_{clean_hook}_{start_s}s_{end_s}s"
+
+        # If source MP4 exists, ensure it is copied/linked inside project clips directory
+        if sidecar.file_path and os.path.exists(sidecar.file_path):
+            project_mp4 = os.path.join(clips_dir, f"{descriptive_base}.mp4")
+            if not os.path.exists(project_mp4) and os.path.abspath(sidecar.file_path) != os.path.abspath(project_mp4):
+                try:
+                    try:
+                        os.link(sidecar.file_path, project_mp4)
+                    except Exception:
+                        shutil.copyfile(sidecar.file_path, project_mp4)
+                except Exception as e:
+                    logger.warning(f"Could not link MP4 to project clips: {e}")
+
+        sidecar_path = os.path.join(clips_dir, f"{descriptive_base}.json")
         self._write_json_atomic(sidecar_path, sidecar.to_dict())
 
-        # Also save a mirror sidecar in rendered_clips_dir for direct file lookup
+        # Also save legacy mirror in clips_dir for clip_<id>.json lookup
+        base_cid = sidecar.clip_id[5:] if sidecar.clip_id.startswith("clip_") else sidecar.clip_id
+        legacy_sidecar_path = os.path.join(clips_dir, f"clip_{base_cid}.json")
+        if legacy_sidecar_path != sidecar_path:
+            try:
+                self._write_json_atomic(legacy_sidecar_path, sidecar.to_dict())
+            except Exception:
+                pass
+
+        # Mirror in rendered_clips_dir for direct file lookup
         mirror_name = os.path.splitext(os.path.basename(sidecar.file_path))[0]
         mirror_path = os.path.join(self.rendered_clips_dir, f"{mirror_name}.json")
         try:
@@ -224,6 +308,7 @@ class ProjectStore:
             os.path.join(self.projects_dir, "*", "clips", f"clip_{base_cid}.json"),
             os.path.join(self.projects_dir, "*", "clips", f"{clip_id}.json"),
             os.path.join(self.projects_dir, "*", "clips", f"clip_{clip_id}.json"),
+            os.path.join(self.projects_dir, "*", "clips", f"*{base_cid}*.json"),
         ]
         for pattern in candidate_patterns:
             matches = glob.glob(pattern)
@@ -261,13 +346,12 @@ class ProjectStore:
         if project_id:
             proj = self.get_project(project_id)
             if proj:
-                pdir = self.get_project_dir(proj.project_id)
+                pdir = self.get_project_dir(proj.video_id or proj.project_id)
                 search_paths = [os.path.join(pdir, "clips", "*.json")]
             else:
                 clean_id = project_id.replace("project_", "").replace("proj_", "")
                 search_paths = [
-                    os.path.join(self.projects_dir, f"project_*proj_{clean_id}*", "clips", "*.json"),
-                    os.path.join(self.projects_dir, f"project_*{clean_id}*", "clips", "*.json"),
+                    os.path.join(self.projects_dir, f"*{clean_id}*", "clips", "*.json"),
                 ]
         else:
             search_paths = [os.path.join(self.projects_dir, "*", "clips", "*.json")]

@@ -133,16 +133,32 @@ class SolidShortsDecider:
 
             # Check retention peak alignment
             if heatmap_data and heatmap_data.peaks:
+                matched_peak = False
                 for p in heatmap_data.peaks:
                     peak_time = getattr(p, "center_time", getattr(p, "timestamp", 0.0))
                     if c.start_seconds <= peak_time <= c.end_seconds:
                         intensity = getattr(p, "intensity", 0.0)
                         prominence = getattr(p, "prominence", 0.0)
-                        if intensity >= 0.50 or prominence >= 0.20:
-                            boost = min(8.0, 10.0 * intensity * (1.0 + prominence))
+                        classification = getattr(p, "classification", "")
+                        if classification == "GLOBAL_MAXIMA":
+                            boost = 28.0 * intensity
+                            effective_score += boost
+                            retention_reason = f"Global #1 Replay Peak at {peak_time:.1f}s (Intensity: {intensity*100:.0f}%, +{boost:.1f} boost)"
+                        elif intensity >= 0.35 or prominence >= 0.10:
+                            boost = 18.0 * intensity + 12.0 * prominence
                             effective_score += boost
                             retention_reason = f"Audience peak at {peak_time:.1f}s (Intensity: {intensity*100:.0f}%, +{boost:.1f} boost)"
-                            break
+                        else:
+                            boost = 10.0 * intensity
+                            effective_score += boost
+                            retention_reason = f"Engagement wave at {peak_time:.1f}s (Intensity: {intensity*100:.0f}%, +{boost:.1f} boost)"
+                        matched_peak = True
+                        break
+
+                # If the video has prominent replay spikes and this candidate is in a non-peak zone,
+                # mark it as base score
+                if not matched_peak:
+                    retention_reason = "Base score (no retention peak alignment)"
 
             scored_pool.append((effective_score, c, retention_reason))
 
@@ -150,6 +166,7 @@ class SolidShortsDecider:
         scored_pool.sort(key=lambda x: x[0], reverse=True)
 
         selected: List[HighlightCandidate] = []
+        selected_eff_scores: List[float] = []
         cliff_idx: Optional[int] = None
 
         for idx, (eff_score, cand, note) in enumerate(scored_pool, 1):
@@ -166,16 +183,17 @@ class SolidShortsDecider:
                     cliff_idx = len(selected)
                 break
 
-            # 3. Hook Floor Check
+            # 3. Hook Floor Check (Peak-anchored candidates are grounded in real viewer replay draw)
             hook_val = 7.0
             if hasattr(cand, "breakdown") and cand.breakdown:
                 hook_val = float(getattr(cand.breakdown, "hook_score", getattr(cand.breakdown, "hook_strength", 7.0)))
             elif hasattr(cand, "signals") and isinstance(cand.signals, dict):
                 hook_val = float(cand.signals.get("hook", 7.0))
 
-            if hook_val < self.config.strict_hook_floor:
+            effective_hook_floor = 5.0 if ("Global #1" in note or "peak" in note.lower()) else self.config.strict_hook_floor
+            if hook_val < effective_hook_floor:
                 reasons.append(
-                    f"Candidate #{idx} rejected: Hook score {hook_val:.1f}/10 is below threshold {self.config.strict_hook_floor:.1f}."
+                    f"Candidate #{idx} rejected: Hook score {hook_val:.1f}/10 is below threshold {effective_hook_floor:.1f}."
                 )
                 continue
 
@@ -199,8 +217,9 @@ class SolidShortsDecider:
                 continue
 
             # 5. Statistical Quality Cliff Check (if we already have at least 1 clip)
+            # Compares effective scores consistently (apples to apples with retention boosts)
             if selected and eff_score < self.config.tier_1_instant_viral_score:
-                avg_selected_score = sum(c.score for c in selected) / len(selected)
+                avg_selected_score = sum(selected_eff_scores) / len(selected_eff_scores)
                 score_drop = avg_selected_score - eff_score
                 if score_drop > self.config.quality_cliff_drop:
                     cliff_idx = len(selected)
@@ -211,6 +230,7 @@ class SolidShortsDecider:
 
             # Passed all filters -> Accept as solid short
             selected.append(cand)
+            selected_eff_scores.append(eff_score)
             reasons.append(
                 f"Accepted Clip #{len(selected)}: [{cand.start_seconds:.1f}s - {cand.end_seconds:.1f}s] (Score: {eff_score:.1f}/100, {note})."
             )

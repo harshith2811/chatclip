@@ -46,6 +46,35 @@ class ChannelInfo:
 
 # Pre-verified 10M+ Channels categorized by high-retention clipping potential
 VERIFIED_10M_CHANNELS: List[ChannelInfo] = [
+    # --- Gaming, GTA 6 & Next-Gen Entertainment ---
+    ChannelInfo(
+        channel_id="UCCl0mcuw9-jGgG1fA29x96A",
+        handle="@RockstarGames",
+        title="Rockstar Games",
+        subscriber_count=11_400_000,
+        category="Gaming & GTA 6",
+        baseline_views=25_000_000.0,
+        uploads_playlist_id="UUCl0mcuw9-jGgG1fA29x96A",
+    ),
+    ChannelInfo(
+        channel_id="UCKy1dAqELo0zrOtPkf0eTMw",
+        handle="@IGN",
+        title="IGN",
+        subscriber_count=18_200_000,
+        category="Gaming & Pop Culture",
+        baseline_views=1_500_000.0,
+        uploads_playlist_id="UUKy1dAqELo0zrOtPkf0eTMw",
+    ),
+    ChannelInfo(
+        channel_id="UC-2Y8dQb0PC699NHj44G0KA",
+        handle="@PlayStation",
+        title="PlayStation",
+        subscriber_count=16_200_000,
+        category="Gaming & Consoles",
+        baseline_views=2_000_000.0,
+        uploads_playlist_id="UU-2Y8dQb0PC699NHj44G0KA",
+    ),
+
     # --- Science, Education & Engineering ---
     ChannelInfo(
         channel_id="UCY1kMZp36IQSyNx_9h4mpCg",

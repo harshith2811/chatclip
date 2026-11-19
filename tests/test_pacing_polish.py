@@ -147,9 +147,10 @@ def test_leading_silence_trimming_and_word_boundary_protection(tmp_path):
         RightsManifest(
             rights_id="rm-polish",
             video_id="test_polish_vid",
-            basis=RightsBasis.OPERATOR_ASSET,
+            basis=RightsBasis.OWNED,
             status=RightsStatus.VERIFIED,
             owner_name="Test Operator",
+            proof_reference="test-fixture-owned",
         )
     )
 

@@ -106,3 +106,37 @@ def test_dynamic_camera_cut_expression(tmp_path):
     assert "crop_h" in res
     assert "ffmpeg_crop_filter" in res
 
+
+def test_face_framer_legacy_ema_scene_cut_expression(tmp_path):
+    """Regression test for L01: ensures legacy EMA with multiple scene cuts and high pan variance does not raise NameError for x_val."""
+    framer = FaceFocusedFramer(sample_fps=5.0, smoothing_mode="ema")
+    video_path = str(tmp_path / "legacy_ema_cuts.mp4")
+
+    # Create video with 4 distinct scene cuts across 3 seconds (30 frames at 10 fps)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(video_path, fourcc, 10.0, (1280, 720))
+    for i in range(30):
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        # Shift scene color drastically every 7 frames to force scene cuts in histogram correlation
+        if i < 7:
+            frame[:, :] = (200, 50, 50)
+            cx = 200
+        elif i < 15:
+            frame[:, :] = (50, 200, 50)
+            cx = 900
+        elif i < 22:
+            frame[:, :] = (50, 50, 200)
+            cx = 300
+        else:
+            frame[:, :] = (200, 200, 50)
+            cx = 850
+        cv2.circle(frame, (cx, 360), 80, (255, 255, 255), -1)
+        out.write(frame)
+    out.release()
+
+    res = framer.analyze_crop_window(video_path, start_seconds=0.0, duration_seconds=3.0)
+    assert res is not None
+    assert "ffmpeg_crop_filter" in res
+    assert "crop=" in res["ffmpeg_crop_filter"]
+
+
