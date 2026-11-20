@@ -11,6 +11,7 @@ const OMNIPOST_URL = process.env.OMNIPOST_BACKEND_URL || 'http://127.0.0.1:3000'
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  outputFileTracingRoot: __dirname,
   images: {
     unoptimized: true,
     remotePatterns: [

@@ -9,6 +9,29 @@ from src.yt_clipping.rendering.captions import SubtitleGenerator
 from src.yt_clipping.rendering.renderer import FFmpegRenderer
 
 
+def test_repeated_exports_have_isolated_safe_paths(tmp_path, monkeypatch):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    renderer = FFmpegRenderer(allow_synthetic=True)
+    monkeypatch.setattr("src.yt_clipping.rendering.renderer.subprocess.run",
+                        lambda *args, **kwargs: SimpleNamespace(returncode=1, stderr="test"))
+    monkeypatch.setattr(renderer, "_generate_synthetic_test_clip",
+                        lambda path, *args: Path(path).write_bytes(b"fixture"))
+    candidate = HighlightCandidate(candidate_id="../candidate", video_id="../../source",
+        start_seconds=0, end_seconds=10, duration_seconds=10,
+        score=80, breakdown=ScoreBreakdown(), hook_title="Test")
+    output = tmp_path / "exports"
+    profile = RenderProfile(name="../../profile", layout_mode="crop_center", burn_subtitles=False)
+    first = renderer.render_clip("source.mp4", candidate, profile, str(output))
+    second = renderer.render_clip("source.mp4", candidate, profile, str(output))
+    assert first.file_path != second.file_path
+    for result in (first, second):
+        assert Path(result.file_path).parent == output
+        assert Path(result.manifest_path).parent == output
+        assert Path(result.file_path).read_bytes() == b"fixture"
+
+
 def test_ass_subtitle_generation_with_safe_margins(tmp_path):
     sub_gen = SubtitleGenerator()
     cand = HighlightCandidate(

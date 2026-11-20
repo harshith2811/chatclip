@@ -75,13 +75,17 @@ def remap_transcript_for_keep_intervals(
             w_mid = (w.start + w.end) / 2.0
             for k_start, k_end, out_offset in interval_mappings:
                 if k_start <= w_mid <= k_end:
-                    s_rel = out_offset + (w.start - k_start)
-                    e_rel = out_offset + (w.end - k_start)
+                    s_rel = out_offset + (max(w.start, k_start) - k_start)
+                    e_rel = out_offset + (min(w.end, k_end) - k_start)
+                    if e_rel <= s_rel:
+                        continue
                     new_words.append(
                         WordTimestamp(
                             word=w.word,
                             start=round(s_rel, 3),
                             end=round(e_rel, 3),
+                            confidence=w.confidence,
+                            speaker_tag=w.speaker_tag,
                         )
                     )
                     break
@@ -810,16 +814,6 @@ class ClippingPipeline:
             probe_info = self.asset_provider.probe_asset(asset_path)
         except Exception:
             pass
-
-        if transcript is None:
-            total_dur = heatmap_data.points[-1].end_time if (heatmap_data and heatmap_data.points) else 60.0
-            transcript = Transcript(
-                video_id=video_id,
-                language="en",
-                duration_seconds=total_dur,
-                text="",
-                segments=[],
-            )
 
         transcript = self.transcriber.load_from_cache(video_id)
         if not transcript or not transcript.segments:

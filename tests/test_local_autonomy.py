@@ -194,6 +194,7 @@ def test_end_to_end_pipeline_zero_cloud_dependency(tmp_path):
     assert os.path.exists(job.rendered_clip.file_path)
     assert os.path.exists(job.rendered_clip.manifest_path)
     # Check that CTA was injected in the ASS subtitles
-    ass_path = out_dir / f"{job.candidate.candidate_id}.ass"
-    assert ass_path.exists()
+    ass_files = list(out_dir.glob("*.ass"))
+    assert len(ass_files) == 1
+    ass_path = ass_files[0]
     assert "Subscribe for autonomous tools" in ass_path.read_text(encoding="utf-8")

@@ -68,7 +68,7 @@ class AppConfig:
     compliance_profile: str = "REVIEW_REQUIRED"  # "STRICT_LICENSED", "REVIEW_REQUIRED", "COMMENTARY_REVIEW"
     legal_officer: bool = True  # False disables copyright/rights/attribution/audio-risk/commentary gates
     web_studio_api_key: Optional[str] = None
-    cors_allowed_origins: str = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000"
+    cors_allowed_origins: str = "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3050,http://127.0.0.1:3050"
     gemini_api_key: Optional[str] = None
     gemini_model: str = "gemini-2.5-flash"
 

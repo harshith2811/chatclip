@@ -309,7 +309,7 @@ class BatchQueueManager:
         return None
 
     def get_active_batch(self) -> Optional[BatchSession]:
-        """Returns the currently active RUNNING batch session, if any and thread is alive."""
+        """Reads the active batch without mutating its state during polling."""
         conn = None
         try:
             conn = self._get_connection()
@@ -320,18 +320,9 @@ class BatchQueueManager:
             )
             row = cursor.fetchone()
             if row:
-                session = self._row_to_session(dict(row))
-                worker = self._active_worker_threads.get(session.batch_id)
-                if worker and worker.is_alive():
-                    return session
-                else:
-                    # Thread died or server restarted, mark cancelled
-                    cursor.execute(
-                        "UPDATE batch_sessions SET status = 'cancelled', completed_at = ? WHERE batch_id = ?",
-                        (datetime.now(timezone.utc).isoformat(), session.batch_id)
-                    )
-                    conn.commit()
-                    return None
+                # FastAPI background tasks run in its own thread pool, not in
+                # _active_worker_threads. Missing local handles do not prove death.
+                return self._row_to_session(dict(row))
         except Exception:
             pass
         finally:

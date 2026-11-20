@@ -120,17 +120,26 @@ class MediaQualityVerifier(QualityVerifier):
 
         width = probe_info.get("width", 0)
         height = probe_info.get("height", 0)
+        video_codec = str(probe_info.get("video_codec") or "").lower()
+        pixel_format = str(probe_info.get("pixel_format") or "").lower()
+        audio_codec = str(probe_info.get("audio_codec") or "").lower()
 
         if not has_video:
             errors.append("Missing video stream in exported MP4 container.")
         if not has_audio:
-            warnings.append("Missing audio stream; clip will be silent.")
+            (errors if self.strict else warnings).append("Missing audio stream; clip will be silent.")
+        if video_codec and video_codec not in {"h264", "avc", "avc1"}:
+            errors.append(f"Unsupported production video codec: {video_codec} (expected H.264).")
+        if pixel_format and pixel_format != "yuv420p":
+            errors.append(f"Unsupported production pixel format: {pixel_format} (expected yuv420p).")
+        if audio_codec and audio_codec not in {"aac", "mp4a"}:
+            errors.append(f"Unsupported production audio codec: {audio_codec} (expected AAC).")
 
         # 5. Duration tolerance check
         dur_diff = abs(actual_duration - expected_dur)
         duration_ok = dur_diff <= self.duration_tolerance_seconds
         if not duration_ok:
-            if dur_diff > 2.5:
+            if self.strict or dur_diff > 2.5:
                 errors.append(f"Duration mismatch: Expected {expected_dur:.2f}s, got {actual_duration:.2f}s (delta {dur_diff:.2f}s).")
             else:
                 warnings.append(f"Slight duration variance: Expected {expected_dur:.2f}s, got {actual_duration:.2f}s (delta {dur_diff:.2f}s).")
@@ -143,6 +152,8 @@ class MediaQualityVerifier(QualityVerifier):
             warnings.append(f"Non-standard vertical aspect ratio: {width}x{height} (ratio {ratio:.3f}).")
 
         # 7. Even dimensions check
+        if width <= 0 or height <= 0:
+            errors.append("Media inspection could not determine valid video dimensions.")
         if (width % 2 != 0) or (height % 2 != 0):
             errors.append(f"Non-even video dimensions ({width}x{height}) can break mobile hardware decoders.")
 
@@ -182,7 +193,7 @@ class MediaQualityVerifier(QualityVerifier):
             cmd = [
                 "ffprobe",
                 "-v", "error",
-                "-show_entries", "format=duration,size:stream=codec_type,width,height,r_frame_rate",
+                "-show_entries", "format=duration,size:stream=codec_type,codec_name,pix_fmt,width,height,r_frame_rate",
                 "-of", "json",
                 path,
             ]
@@ -219,6 +230,9 @@ class MediaQualityVerifier(QualityVerifier):
                         "width": w,
                         "height": h,
                         "fps": fps,
+                        "video_codec": v_stream.get("codec_name"),
+                        "pixel_format": v_stream.get("pix_fmt"),
+                        "audio_codec": next((s.get("codec_name") for s in streams if s.get("codec_type") == "audio"), None),
                         "probe_engine": "ffprobe",
                     }
         except Exception:
@@ -234,12 +248,15 @@ class MediaQualityVerifier(QualityVerifier):
             has_audio = "Audio:" in stderr
             dim_match = re.search(r"Video:.*,\s*(\d{2,5})x(\d{2,5})", stderr)
             fps_match = re.search(r"(\d+(?:\.\d+)?)\s*fps", stderr)
+            video_codec_match = re.search(r"Video:\s*([A-Za-z0-9_-]+)", stderr)
+            pixel_format_match = re.search(r"Video:.*?\b(yuv420p(?:10le)?|yuv422p(?:10le)?|yuv444p(?:10le)?|nv12)\b", stderr)
+            audio_codec_match = re.search(r"Audio:\s*([A-Za-z0-9_-]+)", stderr)
 
             if dur_match and has_video:
                 hh, mm, ss = dur_match.groups()
                 dur = int(hh) * 3600 + int(mm) * 60 + float(ss)
-                w = int(dim_match.group(1)) if dim_match else 1080
-                h = int(dim_match.group(2)) if dim_match else 1920
+                w = int(dim_match.group(1)) if dim_match else 0
+                h = int(dim_match.group(2)) if dim_match else 0
                 fps = float(fps_match.group(1)) if fps_match else 30.0
                 return {
                     "readable": True,
@@ -249,6 +266,9 @@ class MediaQualityVerifier(QualityVerifier):
                     "width": w,
                     "height": h,
                     "fps": fps,
+                    "video_codec": video_codec_match.group(1).lower() if video_codec_match else None,
+                    "pixel_format": pixel_format_match.group(1).lower() if pixel_format_match else None,
+                    "audio_codec": audio_codec_match.group(1).lower() if audio_codec_match else None,
                     "probe_engine": "ffmpeg_cli",
                 }
         except Exception:
@@ -271,7 +291,8 @@ class MediaQualityVerifier(QualityVerifier):
                     return {
                         "readable": True,
                         "has_video": True,
-                        "has_audio": True,
+                        # OpenCV verifies video only, so audio presence is unproven.
+                        "has_audio": False,
                         "duration": dur,
                         "width": w,
                         "height": h,
@@ -388,26 +409,39 @@ def validate_rendered_short(
     dur = float(probe.get("duration") or 0.0)
     w = int(probe.get("width") or 0)
     h = int(probe.get("height") or 0)
+    video_codec = str(probe.get("video_codec") or "").lower()
+    pixel_format = str(probe.get("pixel_format") or "").lower()
+    audio_codec = str(probe.get("audio_codec") or "").lower()
 
     if not readable:
         errors.append(f"Media container cannot be decoded: {probe.get('error', 'Unknown decode failure')}")
     if not has_video:
         errors.append("Missing video stream in container.")
     if not has_audio:
-        warnings.append("Missing audio stream; Short will be silent.")
+        (errors if strict else warnings).append("Missing audio stream; Short will be silent.")
+    if video_codec and video_codec not in {"h264", "avc", "avc1"}:
+        errors.append(f"Unsupported production video codec: {video_codec} (expected H.264).")
+    if pixel_format and pixel_format != "yuv420p":
+        errors.append(f"Unsupported production pixel format: {pixel_format} (expected yuv420p).")
+    if audio_codec and audio_codec not in {"aac", "mp4a"}:
+        errors.append(f"Unsupported production audio codec: {audio_codec} (expected AAC).")
 
     # Aspect ratio check
     ratio = (w / h) if h > 0 else 0.0
     aspect_ok = abs(ratio - (9.0 / 16.0)) < 0.06
     if not aspect_ok:
-        warnings.append(f"Non-standard vertical aspect ratio {w}x{h} (ratio: {ratio:.3f}, expected 0.5625).")
+        (errors if strict else warnings).append(f"Non-standard vertical aspect ratio {w}x{h} (ratio: {ratio:.3f}, expected 0.5625).")
 
     # Duration check
     dur_ok = True
+    if dur <= 0 and strict:
+        errors.append("Media inspection could not determine a positive duration.")
+        dur_ok = False
     if expected_duration is not None and dur > 0:
         delta = abs(dur - expected_duration)
         if delta > duration_tolerance:
-            if delta > 3.5:
+            dur_ok = False
+            if strict or delta > 3.5:
                 errors.append(f"Duration mismatch: Expected {expected_duration:.1f}s, measured {dur:.1f}s.")
                 dur_ok = False
             else:
@@ -442,6 +476,11 @@ def validate_rendered_short(
             "duration_ok": dur_ok,
             "valid_framerate": fps_ok,
             "decodable": readable and has_video,
+            "compatible_codecs": (
+                (not video_codec or video_codec in {"h264", "avc", "avc1"})
+                and (not audio_codec or audio_codec in {"aac", "mp4a"})
+                and (not pixel_format or pixel_format == "yuv420p")
+            ),
         },
         "duration": round(dur, 2),
         "resolution": f"{w}x{h}",

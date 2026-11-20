@@ -155,7 +155,7 @@ Content-Type: application/json
 The platform includes a single boolean master switch controlling all copyright, attribution, and license restrictions:
 
 - **When `LEGAL_OFFICER = True` (Default Strict Mode):** All copyright, rights manifest, creator attribution, commentary, and audio-risk policies are strictly enforced. Unverified clips are denied publication.
-- **When `LEGAL_OFFICER = False` (Unrestricted Speed Mode):** All legal barriers are bypassed. Videos are published without obstruction while logging an honest `'UNVERIFIED_BYPASS'` in audit records.
+- **When `LEGAL_OFFICER = False` (Testing-only bypass):** Rights barriers are bypassed while an honest `'UNVERIFIED_BYPASS'` is recorded. Never use this setting for production or third-party media.
 
 ---
 
@@ -188,21 +188,38 @@ python -m venv venv
 venv\Scripts\activate    # On Windows
 # source venv/bin/activate # On Linux/macOS
 pip install -r requirements.txt
+pip install -e .
 
-# 3. Setup Next.js Frontend
+# 3. Configure production-safe defaults
+copy .env.example .env     # Windows
+# cp .env.example .env     # Linux/macOS
+# Replace placeholder secrets, especially WEB_STUDIO_API_KEY.
+
+# 4. Setup Next.js Frontend
 cd frontend
 npm install
 cd ..
 
-# 4. Launch FastAPI Backend (:8000)
-python -m uvicorn yt_clipping.web.server:app --host 127.0.0.1 --port 8000
+# 5. Validate configuration and launch FastAPI Backend (:8000)
+yt-clip config validate
+yt-clip studio --host 127.0.0.1 --port 8000
 
-# 5. Launch Next.js Studio (:3050) in a separate terminal
+# 6. Launch Next.js Studio (:3050) in a separate terminal
 cd frontend
 npm run dev
 ```
 
-Open **`http://127.0.0.1:3050`** to access the complete Studio experience.
+Open **`http://localhost:3050`** to access the complete Studio experience.
+In production mode, open the workspace menu, enter the configured
+`WEB_STUDIO_API_KEY` under **Studio Access**, and connect. The key is kept in
+memory only; the backend establishes an HTTP-only media session.
+Before processing a source, register evidence that you own or are authorized to use it:
+
+```bash
+yt-clip rights register --video-id VIDEO_ID --basis OWNED --owner "Your Name" --proof "Internal asset record"
+yt-clip ingest --video-id VIDEO_ID
+yt-clip run --video-id VIDEO_ID --dry-run --max-clips 3
+```
 
 ---
 
@@ -282,14 +299,26 @@ yt-clipping-intelligence/
 
 Run the automated test suite:
 ```bash
-python -m pytest tests/test_trend_analysis.py tests/test_word_snapping_precision.py
+python -m pytest -q
 ```
 
-Run frontend typecheck and production build:
+Run frontend typecheck, lint, and production build:
 ```bash
 cd frontend
+npm run typecheck
+npm run lint
 npm run build
 ```
+
+Run the reproducible, locally owned spoken-media acceptance test:
+
+```bash
+python scripts/verify_spoken_mvp.py path/to/your_authorized_spoken_source.mp4
+```
+
+The script exercises transcription, candidate selection, rendering, strict media
+QA, rights enforcement, and a dry-run publishing handoff without requiring an
+unlicensed third-party source.
 
 ---
 

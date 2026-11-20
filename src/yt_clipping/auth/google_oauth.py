@@ -45,7 +45,8 @@ class DedicatedYouTubeAuth:
         env_mode: Optional[str] = None,
     ):
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        self.credentials_file = credentials_file or os.path.join(base_dir, "data", "credentials", "youtube_auth.json")
+        data_dir = os.environ.get("DATA_DIR") or os.path.join(base_dir, "data")
+        self.credentials_file = credentials_file or os.path.join(data_dir, "credentials", "youtube_auth.json")
         self.env_mode = (env_mode or os.environ.get("OMNIPOST_ENV") or os.environ.get("ENVIRONMENT") or "development").lower()
 
         # Dedicated credentials exclusively from environment or isolated config

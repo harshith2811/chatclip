@@ -241,7 +241,7 @@ def test_cli_cmd_run_forwards_cta_and_polish_profile(monkeypatch):
     monkeypatch.setattr("src.yt_clipping.cli.master_cli.build_pipeline", lambda **k: FakePipeline())
 
     args = argparse.Namespace(
-        video_id="test_cta_vid",
+        video_id="ctaTestVid1",
         video_id_pos=None,
         min_duration=15.0,
         max_duration=60.0,

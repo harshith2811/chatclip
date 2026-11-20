@@ -64,41 +64,11 @@ class AssetIngestionError(RuntimeError):
 
 
 def extract_youtube_video_id(url_or_id: str) -> str:
-    """
-    Extracts canonical 11-character YouTube video ID from various URL formats or bare IDs.
-    """
-    url_or_id = url_or_id.strip()
-    # Bare 11-character video ID pattern (alphanumeric, -, _)
-    if re.fullmatch(r"^[A-Za-z0-9_-]{11}$", url_or_id):
-        return url_or_id
+    """Use the same validated URL/ID contract as the studio metadata endpoint."""
+    from ..discovery.video_metadata import normalize_youtube_url
 
-    # Handle full URLs (youtube.com, m.youtube.com, youtu.be, youtube.com/shorts/)
-    parsed = urlparse(url_or_id)
-    if "youtu.be" in parsed.netloc:
-        path_parts = parsed.path.strip("/").split("/")
-        if path_parts and len(path_parts[0]) == 11:
-            return path_parts[0]
-
-    if "youtube.com" in parsed.netloc:
-        if parsed.path == "/watch":
-            qs = parse_qs(parsed.query)
-            if "v" in qs and qs["v"]:
-                return qs["v"][0]
-        elif parsed.path.startswith("/shorts/"):
-            parts = parsed.path.split("/")
-            if len(parts) >= 3 and len(parts[2]) == 11:
-                return parts[2]
-        elif parsed.path.startswith("/live/"):
-            parts = parsed.path.split("/")
-            if len(parts) >= 3 and len(parts[2]) == 11:
-                return parts[2]
-
-    # Regex search for fallback
-    match = re.search(r"[a-zA-Z0-9_-]{11}", url_or_id)
-    if match:
-        return match.group(0)
-
-    raise ValueError(f"Could not extract valid YouTube video ID from: '{url_or_id}'")
+    video_id, _ = normalize_youtube_url(url_or_id)
+    return video_id
 
 
 class LocalAssetProvider(AssetProvider):

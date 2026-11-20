@@ -65,6 +65,25 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     }),
     {
       name: 'yt-clipping-workspace-storage',
+      version: 2,
+      // The studio key is held only in memory long enough to establish the
+      // backend's HTTP-only media session. Never persist it in localStorage.
+      partialize: (state) => ({
+        workspaceId: state.workspaceId,
+        userId: state.userId,
+        userName: state.userName,
+        userRole: state.userRole,
+        tenantKey: state.tenantKey,
+        workspaces: state.workspaces.map(({ apiKey: _apiKey, ...workspace }) => workspace),
+        teamMembers: state.teamMembers,
+      }),
+      migrate: (persistedState: any, version) => {
+        if (version < 2 && persistedState) {
+          const { apiKey: _apiKey, ...safeState } = persistedState;
+          return { ...safeState, apiKey: null };
+        }
+        return persistedState;
+      },
     }
   )
 );

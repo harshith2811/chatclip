@@ -120,6 +120,11 @@ def test_batch_api_endpoints(monkeypatch):
     from yt_clipping.web.server import app
 
     monkeypatch.setattr("yt_clipping.web.server._execute_batch_background", lambda batch_id: None)
+    # This API state test must not fetch live YouTube metadata.
+    from types import SimpleNamespace
+    monkeypatch.setattr("yt_clipping.web.server.metadata_service.get_metadata",
+                        lambda video_id: SimpleNamespace(title="Test", channel_title="Test",
+                            thumbnail_url="", duration=30))
 
     client = TestClient(app)
 

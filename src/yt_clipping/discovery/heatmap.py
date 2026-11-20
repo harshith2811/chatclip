@@ -357,6 +357,9 @@ class HeatmapAnalyzer:
                 while r_idx < n - 1 and smoothed[r_idx] > half_level:
                     r_idx += 1
                 width_sec = max(points[r_idx].end_time - points[l_idx].start_time, et - st)
+                # A flat-topped peak is detected at its left edge. Use its
+                # measured support center so broad engagement is not truncated.
+                center = (points[l_idx].start_time + points[r_idx].end_time) / 2.0
 
                 # Classification
                 if abs(val - global_max_val) < 0.01:
@@ -468,6 +471,7 @@ class HeatmapAnalyzer:
                     lead_in_dur = center_time - seg.start
                     if 10.0 <= lead_in_dur <= 28.0:
                         h_val += 2.0
+                    h_val -= abs(seg.start - ideal_start) * 0.5
                     candidate_hooks.append((h_val, seg.start))
             
             if candidate_hooks:
@@ -492,6 +496,7 @@ class HeatmapAnalyzer:
                         p_val += 3.0
                     if any(m in t_str.lower() for m in ("that's", "so ", "because", "higher", "better", "overall", "works")):
                         p_val += 1.5
+                    p_val -= abs(seg.end - ideal_end) * 0.5
                     candidate_payoffs.append((p_val, seg.end))
 
             if candidate_payoffs:

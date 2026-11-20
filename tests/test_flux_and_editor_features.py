@@ -543,8 +543,8 @@ def test_active_render_jobs_pruning():
     assert len(active_render_jobs) <= 50
 
 
-def test_pipeline_integrates_flux_overlay_end_to_end(tmp_path):
-    """Verifies pipeline lifecycle directly executes FLUX visual intervention overlay when justified."""
+def test_pipeline_keeps_removed_flux_intervention_disabled(tmp_path):
+    """The retained legacy enable_flux field must not invoke the removed stage."""
     from yt_clipping.orchestration.pipeline import ClippingPipeline
     from yt_clipping.scoring.visual_director import VisualCreativeDirector, VisualInterventionDecision
     from yt_clipping.rendering.b_roll import BRollOverlayEngine, BRollOverlayResult
@@ -673,21 +673,9 @@ def test_pipeline_integrates_flux_overlay_end_to_end(tmp_path):
         broll_assets_dir=None,
     )
 
-    # 1. Visual director evaluated candidate
-    mock_director.evaluate_candidate.assert_called_once()
-
-    # 2. BRoll explicit overlay was called with correct parameters
-    mock_broll.apply_explicit_overlay.assert_called_once_with(
-        video_path=initial_clip_path,
-        output_path=str(out_dir / "candidate_1_flux.mp4"),
-        overlay_asset_path=flux_video_path,
-        start_seconds=1.5,
-        duration_seconds=2.5,
-        description="FLUX: Neural Grid",
-    )
-
-    # 3. Rendered clip updated to overlaid video
-    assert res_job.rendered_clip.file_path == final_flux_path
-    assert res_job.rendered_clip.file_hash == "overlaid_hash_12345"
+    mock_director.evaluate_candidate.assert_not_called()
+    mock_broll.apply_explicit_overlay.assert_not_called()
+    assert res_job.rendered_clip.file_path == initial_clip_path
+    assert res_job.rendered_clip.file_hash == "init_hash"
 
 

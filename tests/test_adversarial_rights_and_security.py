@@ -353,6 +353,41 @@ def test_studio_api_requires_key_and_fails_closed_in_prod(monkeypatch):
     assert bad_reg.status_code == 400
 
 
+def test_production_media_uses_http_only_authenticated_session(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("WEB_STUDIO_API_KEY", "media-session-key")
+    client = TestClient(web_server.app, base_url="https://testserver")
+
+    # Raw media paths are protected before StaticFiles can reveal whether a file exists.
+    assert client.get("/clips/does-not-exist.mp4").status_code == 401
+    assert client.get("/assets/does-not-exist.mp4").status_code == 401
+
+    bootstrap = client.get(
+        "/api/v1/ops/health",
+        headers={"X-API-Key": "media-session-key"},
+    )
+    assert bootstrap.status_code == 200
+    cookie = bootstrap.headers.get("set-cookie", "")
+    assert "yt_studio_session=" in cookie
+    assert "HttpOnly" in cookie
+    assert "Secure" in cookie
+    assert "SameSite=strict" in cookie
+
+    # The native browser request now passes auth via its secure cookie and reaches
+    # StaticFiles (404 because this deliberately named fixture does not exist).
+    assert client.get("/clips/does-not-exist.mp4").status_code == 404
+    assert client.get("/assets/does-not-exist.mp4").status_code == 404
+
+    # Local HTTP development remains usable; HTTPS deployments retain Secure.
+    http_client = TestClient(web_server.app, base_url="http://localhost")
+    local_bootstrap = http_client.get(
+        "/api/v1/ops/health",
+        headers={"X-API-Key": "media-session-key"},
+    )
+    assert local_bootstrap.status_code == 200
+    assert "; Secure" not in local_bootstrap.headers.get("set-cookie", "")
+
+
 # ----------------------------------------------------------------------------
 # 4. GeminiService Header Auth, Prompt-Injection Defense & Telemetry
 # ----------------------------------------------------------------------------

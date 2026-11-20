@@ -87,14 +87,16 @@ class ContextAwareSegmenter(HighlightDetector):
                 words = seg.text.split()
                 if not words:
                     continue
-                num_chunks = max(int(dur // chunk_target) + 1, 1)
-                chunk_size = max(len(words) // num_chunks, 1)
+                num_chunks = min(len(words), max(int(dur // chunk_target) + 1, 1))
                 chunk_dur = dur / num_chunks
-                for idx in range(0, len(words), chunk_size):
-                    c_text = " ".join(words[idx : idx + chunk_size])
-                    c_idx = idx // chunk_size
+                for c_idx in range(num_chunks):
+                    # Partition both text and time into the same number of chunks.
+                    # Fixed floor-sized slices could leave the last words past seg.end.
+                    first_word = c_idx * len(words) // num_chunks
+                    last_word = (c_idx + 1) * len(words) // num_chunks
+                    c_text = " ".join(words[first_word:last_word])
                     c_start = round(seg.start + (c_idx * chunk_dur), 2)
-                    c_end = round(min(c_start + chunk_dur, seg.end), 2)
+                    c_end = round(seg.start + ((c_idx + 1) * chunk_dur), 2)
                     # BUG-15 fix: strictly require c_end > c_start
                     if c_end <= c_start:
                         continue

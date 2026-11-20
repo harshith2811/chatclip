@@ -15,17 +15,8 @@ mkdir -p /app/data/assets \
          /app/data/handoffs \
          /app/data/temp
 
-# Handle volume mount synchronization for /app/clips and /app/data/rendered_clips
-if [ -d /app/clips ] && [ ! -L /app/clips ] && grep -q " /app/clips " /proc/mounts 2>/dev/null; then
-  # Dedicated volume mounted at /app/clips; link rendered_clips into it
-  if [ ! -L /app/data/rendered_clips ]; then
-    rmdir /app/data/rendered_clips 2>/dev/null || true
-    if [ ! -d /app/data/rendered_clips ]; then
-      ln -sfn /app/clips /app/data/rendered_clips
-    fi
-  fi
-elif [ ! -e /app/clips ] || [ ! -L /app/clips ]; then
-  # Ensure /app/clips symlinks directly to /app/data/rendered_clips
+# Keep the legacy /app/clips path pointed at the single durable output store.
+if [ ! -e /app/clips ] || [ ! -L /app/clips ]; then
   rmdir /app/clips 2>/dev/null || true
   if [ ! -d /app/clips ]; then
     ln -sfn /app/data/rendered_clips /app/clips

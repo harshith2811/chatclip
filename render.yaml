@@ -31,6 +31,22 @@ services:
       - key: DATA_DIR
         value: /app/data
 
+      # Fail-closed production and rights enforcement defaults
+      - key: ENVIRONMENT
+        value: production
+
+      - key: YT_EXECUTION_MODE
+        value: production
+
+      - key: LEGAL_OFFICER
+        value: "true"
+
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://yt-clip-studio.onrender.com
+
+      - key: WEB_STUDIO_API_KEY
+        sync: false
+
       # Secure API Keys (Configure in Render Dashboard -> Environment)
       - key: GEMINI_API_KEY
         sync: false

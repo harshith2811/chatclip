@@ -325,8 +325,9 @@ def test_renderer_with_cta_enabled(tmp_path):
     assert os.path.exists(clip.manifest_path)
 
     # Verify subtitle .ass file contains injected CTA overlay
-    sub_file = tmp_path / f"{candidate.candidate_id}.ass"
-    assert sub_file.exists()
+    subtitle_files = list(tmp_path.glob("*.ass"))
+    assert len(subtitle_files) == 1
+    sub_file = subtitle_files[0]
     content = sub_file.read_text(encoding="utf-8")
     assert "CTA_Overlay" in content
     assert "Subscribe now for more clips" in content
@@ -364,8 +365,9 @@ def test_renderer_with_cta_no_subtitles(tmp_path):
     )
 
     assert os.path.exists(clip.file_path)
-    cta_ass = tmp_path / f"{candidate.candidate_id}_cta.ass"
-    assert cta_ass.exists()
+    cta_files = list(tmp_path.glob("*_cta.ass"))
+    assert len(cta_files) == 1
+    cta_ass = cta_files[0]
     content = cta_ass.read_text(encoding="utf-8")
     assert "Follow our daily show" in content
 

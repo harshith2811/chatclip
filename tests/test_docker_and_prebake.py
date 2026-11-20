@@ -23,8 +23,8 @@ def test_docker_entrypoint_file_exists():
     assert "nvidia-smi" in content
     assert "assets/flux" in content
     assert "USE_GPU" in content
-    assert "/proc/mounts" in content
     assert "ln -sfn" in content
+    assert "/app/data/rendered_clips /app/clips" in content
 
 
 def test_dockerfiles_and_compose_specs():
@@ -46,6 +46,9 @@ def test_dockerfiles_and_compose_specs():
     assert "runtime: docker" in render_content
     assert "healthCheckPath: /api/v1/health" in render_content
     assert "plan: free" in render_content
+    assert "WEB_STUDIO_API_KEY" in render_content
+    assert "ENVIRONMENT" in render_content
+    assert "LEGAL_OFFICER" in render_content
 
     df_content = open(dockerfile_path, "r", encoding="utf-8").read()
     assert "nvidia/cuda" in df_content or "python:" in df_content
@@ -53,7 +56,7 @@ def test_dockerfiles_and_compose_specs():
     assert "HEALTHCHECK" in df_content
     assert "assets/flux" in df_content
     assert "top_trending_videos_in_youtube" in df_content
-    assert 'VOLUME ["/app/data", "/app/clips"]' in df_content
+    assert 'VOLUME ["/app/data"]' in df_content
     assert "ln -sfn /app/data/rendered_clips /app/clips" in df_content
 
     req_content = open(requirements_path, "r", encoding="utf-8").read()
@@ -63,7 +66,10 @@ def test_dockerfiles_and_compose_specs():
     assert "studio:" in compose_content
     assert "daemon:" in compose_content
     assert "worker:" in compose_content
-    assert "./clips:/app/clips" in compose_content
+    assert "./clips:/app/clips" not in compose_content
+    assert "ENVIRONMENT=${ENVIRONMENT:-production}" in compose_content
+    assert "LEGAL_OFFICER=${LEGAL_OFFICER:-true}" in compose_content
+    assert "WEB_STUDIO_API_KEY=${WEB_STUDIO_API_KEY:-}" in compose_content
     assert "CLOUDFLARE_ACCOUNT_ID" in compose_content
 
     gpu_content = open(compose_gpu_path, "r", encoding="utf-8").read()

@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 
 
 class RightsBasis(str, Enum):
@@ -630,11 +631,17 @@ class HighlightCandidate:
     loop_affinity_score: float = 0.0
 
     def validate_bounds(self, source_duration: float) -> bool:
+        values = (self.start_seconds, self.end_seconds, self.duration_seconds, source_duration)
+        if any(isinstance(value, bool) or not isinstance(value, (int, float))
+               or not math.isfinite(value) for value in values):
+            return False
+        if source_duration <= 0 or self.duration_seconds <= 0:
+            return False
         if self.start_seconds < 0.0:
             return False
         if self.end_seconds <= self.start_seconds:
             return False
-        if self.end_seconds > source_duration + 0.5:  # small floating-point tolerance
+        if self.end_seconds > source_duration + 0.001:  # millisecond rounding only
             return False
         if abs(self.duration_seconds - (self.end_seconds - self.start_seconds)) > 0.05:
             return False

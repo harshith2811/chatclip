@@ -8,6 +8,71 @@ from src.yt_clipping.contracts.models import RenderedClip, HighlightCandidate, S
 from src.yt_clipping.qa.verifier import MediaQualityVerifier
 
 
+@pytest.mark.parametrize("overrides", [
+    {"has_audio": False}, {"width": 1920, "height": 1080},
+    {"duration": 0}, {"duration": 33}, {"video_codec": "vp9"},
+    {"pixel_format": "yuv444p"}, {"audio_codec": "opus"},
+])
+def test_strict_short_validation_rejects_unusable_outputs(tmp_path, monkeypatch, overrides):
+    from src.yt_clipping.qa.verifier import validate_rendered_short
+
+    artifact = tmp_path / "short.mp4"
+    artifact.write_bytes(b"x" * 2048)
+    probe = dict(readable=True, has_video=True, has_audio=True,
+                 width=1080, height=1920, duration=30, fps=30)
+    probe.update(overrides)
+    monkeypatch.setattr(MediaQualityVerifier, "_probe_media", lambda self, path: probe)
+    result = validate_rendered_short(str(artifact), expected_duration=30, strict=True)
+    assert result["valid"] is False
+    assert result["status"] == "FAILED"
+
+
+def test_opencv_fallback_does_not_invent_audio(monkeypatch):
+    from unittest.mock import Mock
+    import cv2
+
+    def missing_binary(*args, **kwargs):
+        raise FileNotFoundError("probe unavailable")
+
+    monkeypatch.setattr("src.yt_clipping.qa.verifier.subprocess.run", missing_binary)
+    capture = Mock()
+    capture.isOpened.return_value = True
+    capture.get.side_effect = lambda key: {
+        cv2.CAP_PROP_FPS: 30, cv2.CAP_PROP_FRAME_COUNT: 900,
+        cv2.CAP_PROP_FRAME_WIDTH: 1080, cv2.CAP_PROP_FRAME_HEIGHT: 1920,
+    }[key]
+    capture.read.return_value = (True, object())
+    monkeypatch.setattr(cv2, "VideoCapture", lambda _: capture)
+    probe = MediaQualityVerifier(strict=True)._probe_media("video.mp4")
+    assert probe["has_video"] is True
+    assert probe["has_audio"] is False
+    capture.release.assert_called_once()
+
+
+@pytest.mark.parametrize("has_audio,duration", [(False, 30.0), (True, 31.5)])
+def test_strict_qa_rejects_silent_or_out_of_tolerance_export(tmp_path, monkeypatch, has_audio, duration):
+    artifact = tmp_path / "export.mp4"
+    artifact.write_bytes(b"x" * 2048)
+    clip = RenderedClip(
+        clip_id="clip", job_id="job", candidate_id="candidate",
+        file_path=str(artifact), file_hash="", duration_seconds=30.0,
+        width=1080, height=1920, manifest_path="", rendered_at="",
+    )
+    candidate = HighlightCandidate(
+        candidate_id="candidate", video_id="video", start_seconds=0.0,
+        end_seconds=30.0, duration_seconds=30.0, score=80,
+        breakdown=ScoreBreakdown(), hook_title="Hook",
+    )
+    verifier = MediaQualityVerifier(strict=True)
+    monkeypatch.setattr(verifier, "_probe_media", lambda _: {
+        "readable": True, "has_video": True, "has_audio": has_audio,
+        "duration": duration, "width": 1080, "height": 1920,
+    })
+    report = verifier.verify_clip(clip, candidate)
+    assert report.status == "FAILED"
+    assert any(("Missing audio" if not has_audio else "Duration mismatch") in e for e in report.errors)
+
+
 def test_qa_verifier_passes_valid_artifact(tmp_path):
     verifier = MediaQualityVerifier(strict=False)
     test_mp4 = str(tmp_path / "valid_clip.mp4")

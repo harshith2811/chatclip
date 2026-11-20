@@ -11,6 +11,8 @@ import subprocess
 import json
 import hashlib
 import logging
+import re
+import uuid
 from datetime import datetime, timezone
 
 from ..contracts.models import HighlightCandidate, RenderProfile, RenderedClip, Transcript
@@ -262,7 +264,11 @@ class FFmpegRenderer(Renderer):
         except Exception:
             pass
         suffix = profile.name if profile.layout_mode in profile.name else f"{profile.name}_{profile.layout_mode}"
-        clip_name = f"{candidate.video_id}_{candidate.start_seconds:06.1f}_{candidate.end_seconds:06.1f}_{suffix}.mp4"
+        safe_video_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(candidate.video_id))[:80]
+        safe_suffix = re.sub(r"[^A-Za-z0-9_-]", "_", str(suffix))[:80]
+        render_id = uuid.uuid4().hex
+        artifact_stem = f"{safe_video_id}_{candidate.start_seconds:06.1f}_{candidate.end_seconds:06.1f}_{safe_suffix}_{render_id}"
+        clip_name = f"{artifact_stem}.mp4"
         final_path = os.path.abspath(os.path.join(output_dir, clip_name))
         temp_path = f"{final_path}.tmp.mp4"
         manifest_path = os.path.abspath(os.path.join(output_dir, f"{clip_name}.manifest.json"))
@@ -270,7 +276,7 @@ class FFmpegRenderer(Renderer):
         # Generate subtitles if requested and transcript is provided
         sub_path = None
         if profile.burn_subtitles and transcript:
-            sub_path = os.path.join(output_dir, f"{candidate.candidate_id}.ass")
+            sub_path = os.path.join(output_dir, f"{artifact_stem}.ass")
             generator = self.subtitles
             preset = getattr(profile, "subtitle_preset", None)
             if preset and preset in SubtitleGenerator.STYLE_PRESETS:
@@ -296,7 +302,7 @@ class FFmpegRenderer(Renderer):
                     layout_mode=profile.layout_mode,
                 )
             else:
-                cta_ass_path = os.path.join(output_dir, f"{candidate.candidate_id}_cta.ass")
+                cta_ass_path = os.path.join(output_dir, f"{artifact_stem}_cta.ass")
                 self.cta_engine.generate_standalone_ass_file(
                     cta_ass_path,
                     candidate.duration_seconds,
@@ -395,7 +401,7 @@ class FFmpegRenderer(Renderer):
         if getattr(profile, "enable_outro_card", False) and not (self.allow_synthetic and not rendered_via_cli):
             try:
                 # 1. Extract final frame of main clip for cinematic blurred backdrop
-                last_frame_path = os.path.join(output_dir, f"{candidate.candidate_id}_last_frame.jpg")
+                last_frame_path = os.path.join(output_dir, f"{artifact_stem}_last_frame.jpg")
                 subprocess.run(
                     ["ffmpeg", "-y", "-sseof", "-0.1", "-i", final_path, "-vframes", "1", last_frame_path],
                     capture_output=True,
@@ -419,7 +425,7 @@ class FFmpegRenderer(Renderer):
                 )
 
                 # 3. Render standalone outro card MP4
-                outro_path = os.path.join(output_dir, f"{candidate.candidate_id}_outro.mp4")
+                outro_path = os.path.join(output_dir, f"{artifact_stem}_outro.mp4")
                 bg_arg = last_frame_path if os.path.exists(last_frame_path) else None
                 self.outro_engine.render_outro_clip(
                     output_mp4_path=outro_path,
@@ -429,7 +435,7 @@ class FFmpegRenderer(Renderer):
                 )
 
                 # 4. Concatenate main clip with outro card
-                combined_path = os.path.join(output_dir, f"{candidate.candidate_id}_combined.mp4")
+                combined_path = os.path.join(output_dir, f"{artifact_stem}_combined.mp4")
                 self.outro_engine.concat_clip_with_outro(
                     main_clip_path=final_path,
                     outro_clip_path=outro_path,
@@ -481,6 +487,7 @@ class FFmpegRenderer(Renderer):
             "profile": profile.to_dict(),
             "file_path": rendered_clip.file_path,
             "file_hash": rendered_clip.file_hash,
+            "subtitle_path": os.path.abspath(sub_path) if sub_path else None,
             "score": candidate.score,
             "score_breakdown": candidate.breakdown.to_dict(),
             "loop_affinity_score": getattr(candidate, "loop_affinity_score", 0.0),

@@ -130,6 +130,8 @@ _PUBLIC_UNAUTH_PATHS = frozenset({
     "/api/v1/auth/google/callback",
 })
 
+_STUDIO_SESSION_COOKIE = "yt_studio_session"
+
 
 def _compute_file_sha256(file_path: str) -> str:
     h = hashlib.sha256()
@@ -154,11 +156,22 @@ def get_active_compliance_profile() -> ComplianceProfile:
 @app.middleware("http")
 async def enforce_studio_auth(request: Request, call_next):
     path = request.url.path
+    expected_key = (os.getenv("WEB_STUDIO_API_KEY") or "").strip()
+    env_mode = (os.getenv("ENVIRONMENT") or "development").strip().lower()
+    auth_required = (
+        bool(expected_key)
+        or env_mode in ("production", "staging")
+        or os.getenv("STUDIO_AUTH_REQUIRED", "").lower() in ("1", "true", "yes")
+    )
+    # Static media is convenient for localhost development, but source assets and
+    # rendered clips must not become an unauthenticated production file server.
+    public_local_media = not auth_required and (
+        path.startswith("/clips/") or path.startswith("/assets/")
+    )
     if (
         path in _PUBLIC_UNAUTH_PATHS
         or path.startswith("/static/")
-        or path.startswith("/clips/")
-        or path.startswith("/assets/")
+        or public_local_media
         or path.startswith("/docs")
         or path.startswith("/api/v1/docs")
         or path.startswith("/api/docs")
@@ -170,17 +183,15 @@ async def enforce_studio_auth(request: Request, call_next):
     ):
         return await call_next(request)
 
-    if path.startswith("/api/"):
-        expected_key = (os.getenv("WEB_STUDIO_API_KEY") or "").strip()
-        env_mode = (os.getenv("ENVIRONMENT") or "development").strip().lower()
-        auth_required = bool(expected_key) or env_mode in ("production", "staging") or os.getenv("STUDIO_AUTH_REQUIRED", "").lower() in ("1", "true", "yes")
-
+    if path.startswith("/api/") or path.startswith("/clips/") or path.startswith("/assets/"):
         if expected_key:
             provided = (request.headers.get("X-API-Key") or "").strip()
             if not provided:
                 auth_hdr = (request.headers.get("Authorization") or "").strip()
                 if auth_hdr.lower().startswith("bearer "):
                     provided = auth_hdr[7:].strip()
+            if not provided:
+                provided = (request.cookies.get(_STUDIO_SESSION_COOKIE) or "").strip()
             if not provided or not hmac.compare_digest(provided, expected_key):
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized: valid API key required."})
         elif auth_required:
@@ -190,7 +201,30 @@ async def enforce_studio_auth(request: Request, call_next):
             if client_host not in ("127.0.0.1", "::1", "localhost", "testclient"):
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized remote access without WEB_STUDIO_API_KEY."})
 
-    return await call_next(request)
+    response = await call_next(request)
+    # Native <video>, <img>, and download navigation cannot attach Axios auth
+    # headers. Bootstrap a same-origin, HTTP-only cookie after a valid API call
+    # so those browser requests remain authenticated without exposing the key in
+    # media URLs or JavaScript-readable cookies.
+    if expected_key and path.startswith("/api/"):
+        forwarded_proto = (request.headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+        request_proto = forwarded_proto or request.url.scheme.lower()
+        secure_override = (os.getenv("STUDIO_COOKIE_SECURE") or "").strip().lower()
+        cookie_secure = (
+            secure_override in ("1", "true", "yes")
+            if secure_override
+            else request_proto == "https"
+        )
+        response.set_cookie(
+            key=_STUDIO_SESSION_COOKIE,
+            value=expected_key,
+            max_age=8 * 60 * 60,
+            httponly=True,
+            secure=cookie_secure,
+            samesite="strict",
+            path="/",
+        )
+    return response
 
 
 _cors_raw = os.getenv(
@@ -829,7 +863,11 @@ def _render_video_pipeline(
             qa_result = validate_rendered_short(
                 clip_path,
                 expected_duration=expected_dur,
+                strict=True,
             )
+            if not qa_result.get("valid", False) or (j.qa_report and j.qa_report.status == "FAILED"):
+                logger.error("Rejecting rendered clip %s: %s", j.job_id, qa_result.get("errors", []))
+                continue
 
             caption_pkg = caption_synthesizer.generate_caption_package(j.candidate, video_info) if j.candidate else None
             intelligence = caption_synthesizer.explain_clip(j.candidate, video_info) if j.candidate else None
@@ -851,7 +889,7 @@ def _render_video_pipeline(
                 render_settings=profile.to_dict(),
                 file_size_bytes=os.path.getsize(clip_path),
                 qa_report=qa_result,
-                status="COMPLETED" if qa_result.get("valid", True) else "VALIDATION_FAILED",
+                status="COMPLETED",
             )
             project_store.save_clip_sidecar(sidecar)
 
@@ -1423,18 +1461,24 @@ def _sanitize_clip_id(clip_id: str) -> str:
 
 
 def _assert_path_in_data_dir(file_path: str) -> str:
-    resolved = os.path.abspath(file_path)
+    resolved = os.path.realpath(os.path.abspath(file_path))
     allowed_roots = [
-        os.path.abspath(DATA_DIR),
-        os.path.abspath(CLIPS_DIR),
-        os.path.abspath(os.path.join(BASE_DIR, "clips")),
-        os.path.abspath(flux_generator.output_dir),
+        os.path.realpath(os.path.abspath(DATA_DIR)),
+        os.path.realpath(os.path.abspath(CLIPS_DIR)),
+        os.path.realpath(os.path.abspath(os.path.join(BASE_DIR, "clips"))),
+        os.path.realpath(os.path.abspath(flux_generator.output_dir)),
     ]
     if os.getenv("PYTEST_CURRENT_TEST"):
         import tempfile
-        allowed_roots.append(os.path.abspath(tempfile.gettempdir()))
+        allowed_roots.append(os.path.realpath(os.path.abspath(tempfile.gettempdir())))
 
-    if not any(resolved.startswith(root) for root in allowed_roots):
+    def is_within(root: str) -> bool:
+        try:
+            return os.path.commonpath((resolved, root)) == root
+        except ValueError:
+            return False
+
+    if not any(is_within(root) for root in allowed_roots):
         raise HTTPException(status_code=403, detail="Access forbidden: Path outside permitted data directory.")
     return resolved
 
@@ -2694,7 +2738,7 @@ def api_batch_start(req: BatchStartRequest, bg_tasks: BackgroundTasks) -> Dict[s
 def api_batch_status() -> Dict[str, Any]:
     """Returns the live status of the active running batch queue, or idle if none running."""
     active = batch_manager.get_active_batch()
-    if active and getattr(active, "status", None) == "running":
+    if active:
         return active.to_dict()
     return {"status": "idle", "items": [], "message": "Pipeline queue idle. No batch rendering currently in progress."}
 

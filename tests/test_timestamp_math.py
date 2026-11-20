@@ -6,6 +6,61 @@ import pytest
 from src.yt_clipping.contracts.models import HighlightCandidate, ScoreBreakdown
 
 
+@pytest.mark.parametrize("field", ["start_seconds", "end_seconds", "duration_seconds"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), None, "30", True])
+def test_candidate_bounds_reject_nonfinite_and_untyped_timing(field, value):
+    candidate = HighlightCandidate(candidate_id="c", video_id="v", start_seconds=0,
+        end_seconds=30, duration_seconds=30, score=80, breakdown=ScoreBreakdown(), hook_title="Test")
+    setattr(candidate, field, value)
+    assert candidate.validate_bounds(60) is False
+
+
+def test_candidate_bounds_do_not_allow_half_second_past_media_end():
+    candidate = HighlightCandidate(candidate_id="c", video_id="v", start_seconds=0,
+        end_seconds=30.4, duration_seconds=30.4, score=80, breakdown=ScoreBreakdown(), hook_title="Test")
+    assert candidate.validate_bounds(30) is False
+    assert candidate.validate_bounds(float("nan")) is False
+
+
+def test_word_sanitizer_enforces_segment_end():
+    from src.yt_clipping.contracts.models import WordTimestamp
+    from src.yt_clipping.utils.timeline import sanitize_word_timestamps
+
+    words = [WordTimestamp(word="edge", start=1.8, end=2.4),
+             WordTimestamp(word="outside", start=2.5, end=3.0)]
+    result = sanitize_word_timestamps(words, segment_start=1, segment_end=2, media_duration=10)
+    assert [(w.word, w.start, w.end) for w in result] == [("edge", 1.8, 2)]
+
+
+def test_pruned_transcript_words_are_bounded_and_preserve_speaker():
+    from src.yt_clipping.contracts.models import Transcript, TranscriptSegment, WordTimestamp
+    from src.yt_clipping.orchestration.pipeline import remap_transcript_for_keep_intervals
+
+    transcript = Transcript(video_id="source", language="en", duration_seconds=5,
+        text="edge", segments=[TranscriptSegment(segment_id=1, start=0, end=5,
+            text="edge", words=[WordTimestamp(word="edge", start=0.5, end=2.5,
+                confidence=0.7, speaker_tag="speaker")])])
+    result = remap_transcript_for_keep_intervals(transcript, [(1, 2)])
+    word = result.segments[0].words[0]
+    assert (word.start, word.end) == (0, 1)
+    assert word.confidence == 0.7
+    assert word.speaker_tag == "speaker"
+
+
+def test_oversized_segment_partition_preserves_every_word():
+    from src.yt_clipping.contracts.models import TranscriptSegment
+    from src.yt_clipping.detection.segmenter import ContextAwareSegmenter
+
+    text = "one two three four five six seven eight nine ten eleven"
+    segment = TranscriptSegment(segment_id=1, start=10, end=110, text=text, words=[])
+    chunks = ContextAwareSegmenter()._normalize_segments([segment], max_dur=45)
+    assert " ".join(chunk.text for chunk in chunks) == text
+    assert chunks[0].start == 10
+    assert chunks[-1].end == 110
+    assert all(0 < chunk.end - chunk.start <= 45 for chunk in chunks)
+    assert all(left.end == right.start for left, right in zip(chunks, chunks[1:]))
+
+
 def test_candidate_boundary_validation():
     breakdown = ScoreBreakdown()
     valid_cand = HighlightCandidate(

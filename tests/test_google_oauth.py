@@ -13,6 +13,12 @@ from unittest.mock import patch, MagicMock
 from yt_clipping.auth.google_oauth import DedicatedYouTubeAuth
 
 
+def test_default_credentials_follow_data_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    auth = DedicatedYouTubeAuth()
+    assert auth.credentials_file == str(tmp_path / "credentials" / "youtube_auth.json")
+
+
 @pytest.fixture
 def auth_instance(tmp_path):
     creds_file = tmp_path / "youtube_auth.json"

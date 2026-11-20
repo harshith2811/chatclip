@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useWorkspaceStore } from '@/lib/store/workspace-store';
 import { Badge } from '@/components/ui/badge';
-import { Building2, Users, Check, ChevronDown, Shield } from 'lucide-react';
+import { Building2, Users, Check, ChevronDown, KeyRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { UserRole } from '@/types';
 
@@ -23,6 +23,9 @@ const ROLE_STYLES: Record<UserRole, string> = {
 
 export function WorkspaceSwitcher({ className, compact = false }: WorkspaceSwitcherProps) {
   const [isOpen, setIsOpen] = React.useState(false);
+  const [studioKey, setStudioKey] = React.useState('');
+  const [authMessage, setAuthMessage] = React.useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   const {
@@ -35,7 +38,30 @@ export function WorkspaceSwitcher({ className, compact = false }: WorkspaceSwitc
     userRole,
     teamMembers,
     setUser,
+    apiKey,
+    setApiKey,
   } = useWorkspaceStore();
+
+  const connectStudio = async () => {
+    const key = studioKey.trim();
+    if (!key) {
+      setAuthMessage('Enter the WEB_STUDIO_API_KEY configured on the backend.');
+      return;
+    }
+    setIsConnecting(true);
+    setAuthMessage(null);
+    setApiKey(key);
+    try {
+      await api.governor.getStatus();
+      setStudioKey('');
+      setAuthMessage('Connected. Secure media session established.');
+    } catch (error: any) {
+      setApiKey(null);
+      setAuthMessage(error?.message || 'Authentication failed.');
+    } finally {
+      setIsConnecting(false);
+    }
+  };
 
   // Fetch authentic multi-tenant workspaces from SQLite DB
   const { data: tenantsResponse } = useQuery({
@@ -138,6 +164,43 @@ export function WorkspaceSwitcher({ className, compact = false }: WorkspaceSwitc
           aria-orientation="vertical"
           className="absolute right-0 mt-2 w-72 rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-xl z-50 animate-in fade-in-0 zoom-in-95"
         >
+          {/* Production API authentication bootstrap */}
+          <div className="px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+            <KeyRound className="w-3 h-3" />
+            <span>Studio Access</span>
+          </div>
+          <div className="px-2 pt-1 pb-2 space-y-1.5">
+            <div className="flex gap-1.5">
+              <input
+                type="password"
+                value={studioKey}
+                onChange={(event) => setStudioKey(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void connectStudio();
+                }}
+                autoComplete="current-password"
+                placeholder={apiKey ? 'Key loaded for this session' : 'WEB_STUDIO_API_KEY'}
+                aria-label="Studio API key"
+                className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
+              />
+              <button
+                type="button"
+                onClick={() => void connectStudio()}
+                disabled={isConnecting}
+                className="rounded-md bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+              >
+                {isConnecting ? 'Checking...' : 'Connect'}
+              </button>
+            </div>
+            {authMessage && (
+              <p className="text-[10px] leading-4 text-muted-foreground" role="status">
+                {authMessage}
+              </p>
+            )}
+          </div>
+
+          <div className="mb-2 border-t border-border/60" />
+
           {/* Workspaces Section */}
           <div className="px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
             <Building2 className="w-3 h-3" />

@@ -58,6 +58,14 @@ def sanitize_word_timestamps(
         if raw_end <= raw_start:
             raw_end = raw_start + 0.08
 
+        # Word timing must stay inside its containing caption segment.
+        if segment_end is not None:
+            if raw_start >= segment_end:
+                continue
+            raw_end = min(raw_end, segment_end)
+            if raw_end <= raw_start:
+                continue
+
         # Clamp to media duration if known
         if media_duration is not None and media_duration > 0:
             if raw_start >= media_duration - 0.01:
