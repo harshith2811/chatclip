@@ -11,6 +11,11 @@
 .github
 .agents
 
+# Frontend (built separately in frontend/Dockerfile)
+frontend/
+node_modules/
+*/node_modules/
+
 # Python bytecode and type caches
 __pycache__/
 *.py[cod]
@@ -30,6 +35,13 @@ htmlcov/
 data/
 data/*
 !data/.gitkeep
+clips/
+clips/*
+
+# Scratch and temporary folders
+scratch/
+artifacts/
+weights/
 
 # Temporary and log files
 *.log

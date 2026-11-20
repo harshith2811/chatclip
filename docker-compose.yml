@@ -1,14 +1,13 @@
 services:
   # ==============================================================================
-  # Turnkey Live Web Studio & REST API (Ready to Play Live)
-  # Interactive 9:16 vertical short milking, instant preview, face tracking,
-  # and live browser video playback on http://localhost:8000
+  # FastAPI Clipping Engine & Intelligence Backend (Port 8000)
+  # YuNet face tracking, Faster-Whisper ASR, FFmpeg rendering, Google Trends engine
   # ==============================================================================
   studio:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: yt-clipping-studio
+    container_name: yt-clipping-backend
     restart: unless-stopped
     command: ["studio"]
     ports:
@@ -28,6 +27,25 @@ services:
       - POLL_INTERVAL=${POLL_INTERVAL:-300}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:-}
+
+  # ==============================================================================
+  # Next.js 15 Modern Studio Workspace (Port 3050)
+  # Precision 3-Column Video Editor, Viral Discovery, Retention Curve, SupoClip AI
+  # ==============================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: yt-clipping-frontend
+    restart: unless-stopped
+    ports:
+      - "3050:3050"
+    depends_on:
+      - studio
+    environment:
+      - NODE_ENV=production
+      - PORT=3050
+      - FASTAPI_BACKEND_URL=http://studio:8000
 
   # ==============================================================================
   # 24/7 Autonomous Discovery & Clipping Daemon (Optional Background Profile)
