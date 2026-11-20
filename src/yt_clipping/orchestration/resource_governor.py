@@ -170,6 +170,12 @@ class ResourceGovernor:
         ffmpeg_timeout_seconds: float = 180.0,
         max_concurrency_override: Optional[int] = None,
     ):
+        env_disk = os.getenv("MIN_DISK_FREE_GB")
+        if env_disk is not None:
+            try:
+                min_disk_free_gb = float(env_disk)
+            except ValueError:
+                pass
         self.min_disk_free_gb = min_disk_free_gb
         self.ffmpeg_timeout_seconds = ffmpeg_timeout_seconds
 
@@ -306,6 +312,12 @@ class ResourceGovernor:
 
     def assert_sufficient_disk_space(self, min_gb: Optional[float] = None, path: Optional[str] = None) -> None:
         required = min_gb if min_gb is not None else self.min_disk_free_gb
+        env_override = os.getenv("MIN_DISK_FREE_GB")
+        if env_override is not None:
+            try:
+                required = min(required, float(env_override))
+            except ValueError:
+                pass
         free_gb = self.get_free_disk_gb(path)
         if free_gb < required:
             raise InsufficientStorageError(

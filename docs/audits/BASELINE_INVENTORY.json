@@ -1,0 +1,1439 @@
+{
+  "total_routes": 94,
+  "routes": [
+    {
+      "type": "mount",
+      "path": "/clips",
+      "name": "clips"
+    },
+    {
+      "type": "mount",
+      "path": "/assets",
+      "name": "assets"
+    },
+    {
+      "type": "mount",
+      "path": "/static",
+      "name": "static"
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/system/health",
+      "name": "api_health",
+      "endpoint": "api_health",
+      "start": 315,
+      "end": 357,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/health",
+      "name": "api_health",
+      "endpoint": "api_health",
+      "start": 315,
+      "end": 357,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/metadata",
+      "name": "api_get_metadata",
+      "endpoint": "api_get_metadata",
+      "start": 386,
+      "end": 412,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/preview",
+      "name": "api_preview",
+      "endpoint": "api_preview",
+      "start": 415,
+      "end": 674,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/render",
+      "name": "api_render",
+      "endpoint": "api_render",
+      "start": 874,
+      "end": 910,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/render/status/{task_id}",
+      "name": "api_render_status",
+      "endpoint": "api_render_status",
+      "start": 913,
+      "end": 924,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/jobs/{job_id}",
+      "name": "api_get_job",
+      "endpoint": "api_get_job",
+      "start": 927,
+      "end": 936,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/jobs/{job_id}/cancel",
+      "name": "api_cancel_job",
+      "endpoint": "api_cancel_job",
+      "start": 939,
+      "end": 947,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/jobs/{job_id}/stream",
+      "name": "api_stream_job_events",
+      "endpoint": "api_stream_job_events",
+      "start": 950,
+      "end": 991,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/trending/top10m",
+      "name": "api_get_top10m_trending",
+      "endpoint": "api_get_top10m_trending",
+      "start": 993,
+      "end": 1003,
+      "response_model": "typing.List[typing.Dict[str, typing.Any]]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/trending/topics",
+      "name": "api_get_trending_topics",
+      "endpoint": "api_get_trending_topics",
+      "start": 1005,
+      "end": 1023,
+      "response_model": "typing.List[typing.Dict[str, typing.Any]]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/trending/suggest",
+      "name": "api_get_trending_suggestions",
+      "endpoint": "api_get_trending_suggestions",
+      "start": 1025,
+      "end": 1048,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/trending/stream-to-clipper",
+      "name": "api_trending_stream_to_clipper",
+      "endpoint": "api_trending_stream_to_clipper",
+      "start": 1210,
+      "end": 1257,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/clips",
+      "name": "api_list_clips",
+      "endpoint": "api_list_clips",
+      "start": 1260,
+      "end": 1290,
+      "response_model": "typing.List[typing.Dict[str, typing.Any]]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/clips/{clip_id}/regenerate_caption",
+      "name": "api_regenerate_clip_caption",
+      "endpoint": "api_regenerate_clip_caption",
+      "start": 1293,
+      "end": 1337,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/clips/{clip_id}",
+      "name": "api_get_clip",
+      "endpoint": "api_get_clip",
+      "start": 1370,
+      "end": 1377,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/clips/{clip_id}/download",
+      "name": "api_download_clip",
+      "endpoint": "api_download_clip",
+      "start": 1380,
+      "end": 1398,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/clips/{clip_id}/media",
+      "name": "api_stream_clip_media",
+      "endpoint": "api_stream_clip_media",
+      "start": 1401,
+      "end": 1431,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/clips/{clip_id}/stream",
+      "name": "api_stream_clip_stream_alias",
+      "endpoint": "api_stream_clip_stream_alias",
+      "start": 1434,
+      "end": 1437,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/clips/{clip_id}/poster",
+      "name": "api_get_clip_poster",
+      "endpoint": "api_get_clip_poster",
+      "start": 1440,
+      "end": 1488,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/projects",
+      "name": "api_list_projects",
+      "endpoint": "api_list_projects",
+      "start": 1491,
+      "end": 1518,
+      "response_model": "typing.List[typing.Dict[str, typing.Any]]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/projects/{project_id}",
+      "name": "api_get_project",
+      "endpoint": "api_get_project",
+      "start": 1521,
+      "end": 1534,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/api/v1/projects/{project_id}",
+      "name": "api_delete_project",
+      "endpoint": "api_delete_project",
+      "start": 1537,
+      "end": 1546,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/settings",
+      "name": "api_get_settings",
+      "endpoint": "api_get_settings",
+      "start": 1567,
+      "end": 1570,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/settings",
+      "name": "api_update_settings",
+      "endpoint": "api_update_settings",
+      "start": 1573,
+      "end": 1590,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/auth/google/url",
+      "name": "api_get_google_auth_url",
+      "endpoint": "api_get_google_auth_url",
+      "start": 1597,
+      "end": 1601,
+      "response_model": "typing.Dict[str, str]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/auth/google/callback",
+      "name": "api_google_auth_callback",
+      "endpoint": "api_google_auth_callback",
+      "start": 1604,
+      "end": 1636,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/auth/google/status",
+      "name": "api_get_google_auth_status",
+      "endpoint": "api_get_google_auth_status",
+      "start": 1639,
+      "end": 1642,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/auth/google/disconnect",
+      "name": "api_google_disconnect",
+      "endpoint": "api_google_disconnect",
+      "start": 1645,
+      "end": 1649,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/editor/preview-frame",
+      "name": "api_editor_preview_frame",
+      "endpoint": "api_editor_preview_frame",
+      "start": 1721,
+      "end": 1730,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/editor/export",
+      "name": "api_editor_export",
+      "endpoint": "api_editor_export",
+      "start": 1734,
+      "end": 1755,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/editor/waveform",
+      "name": "api_editor_waveform",
+      "endpoint": "api_editor_waveform",
+      "start": 1758,
+      "end": 1782,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/editor/save-poster",
+      "name": "api_save_poster",
+      "endpoint": "api_save_poster",
+      "start": 1785,
+      "end": 1802,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/source/{video_id}",
+      "name": "api_get_source_info",
+      "endpoint": "api_get_source_info",
+      "start": 1805,
+      "end": 1894,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/source/{video_id}/transcript",
+      "name": "api_get_source_transcript",
+      "endpoint": "api_get_source_transcript",
+      "start": 1897,
+      "end": 1936,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/analytics/feedback",
+      "name": "api_record_feedback",
+      "endpoint": "api_record_feedback",
+      "start": 1939,
+      "end": 1962,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/analytics/summary",
+      "name": "api_get_analytics_summary",
+      "endpoint": "api_get_analytics_summary",
+      "start": 1965,
+      "end": 1974,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/flux/status",
+      "name": "api_flux_status",
+      "endpoint": "api_flux_status",
+      "start": 1981,
+      "end": 1984,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/flux/generate",
+      "name": "api_flux_generate",
+      "endpoint": "api_flux_generate",
+      "start": 1987,
+      "end": 2010,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/flux/broll-clip",
+      "name": "api_flux_broll_clip",
+      "endpoint": "api_flux_broll_clip",
+      "start": 2013,
+      "end": 2052,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/flux/auto-broll",
+      "name": "api_flux_auto_broll",
+      "endpoint": "api_flux_auto_broll",
+      "start": 2055,
+      "end": 2080,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/flux/settings",
+      "name": "api_flux_settings",
+      "endpoint": "api_flux_settings",
+      "start": 2083,
+      "end": 2094,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/publish/channels",
+      "name": "api_get_publish_channels",
+      "endpoint": "api_get_publish_channels",
+      "start": 2101,
+      "end": 2112,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/publish/submit",
+      "name": "api_publish_submit",
+      "endpoint": "api_publish_submit",
+      "start": 2115,
+      "end": 2264,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/publish/history",
+      "name": "api_get_publish_history",
+      "endpoint": "api_get_publish_history",
+      "start": 2267,
+      "end": 2270,
+      "response_model": "typing.List[typing.Dict[str, typing.Any]]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/publish/retry/{receipt_id}",
+      "name": "api_retry_publish",
+      "endpoint": "api_retry_publish",
+      "start": 2273,
+      "end": 2286,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/publish/status/{receipt_id}",
+      "name": "api_get_publish_status",
+      "endpoint": "api_get_publish_status",
+      "start": 2289,
+      "end": 2302,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/docs",
+      "name": "serve_docs",
+      "endpoint": "serve_docs",
+      "start": 2314,
+      "end": 2320,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/docs/{doc_path:path}",
+      "name": "serve_docs_subpath",
+      "endpoint": "serve_docs_subpath",
+      "start": 2323,
+      "end": 2355,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/docs/list",
+      "name": "list_available_docs",
+      "endpoint": "list_available_docs",
+      "start": 2358,
+      "end": 2383,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/docs/content/{filename:path}",
+      "name": "get_doc_content",
+      "endpoint": "get_doc_content",
+      "start": 2386,
+      "end": 2417,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/",
+      "name": "serve_dashboard",
+      "endpoint": "serve_dashboard",
+      "start": 2420,
+      "end": 2429,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/studio",
+      "name": "serve_studio",
+      "endpoint": "serve_studio",
+      "start": 2432,
+      "end": 2438,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/login",
+      "name": "serve_login",
+      "endpoint": "serve_login",
+      "start": 2441,
+      "end": 2448,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/robots.txt",
+      "name": "serve_robots",
+      "endpoint": "serve_robots",
+      "start": 2451,
+      "end": 2455,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/sitemap.xml",
+      "name": "serve_sitemap",
+      "endpoint": "serve_sitemap",
+      "start": 2458,
+      "end": 2469,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/favicon.ico",
+      "name": "serve_favicon",
+      "endpoint": "serve_favicon",
+      "start": 2472,
+      "end": 2481,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/favicon.svg",
+      "name": "serve_favicon",
+      "endpoint": "serve_favicon",
+      "start": 2472,
+      "end": 2481,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/og-image.svg",
+      "name": "serve_og_image",
+      "endpoint": "serve_og_image",
+      "start": 2484,
+      "end": 2495,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/batch/start",
+      "name": "api_batch_start",
+      "endpoint": "api_batch_start",
+      "start": 2529,
+      "end": 2582,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/batch/status",
+      "name": "api_batch_status",
+      "endpoint": "api_batch_status",
+      "start": 2585,
+      "end": 2591,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/batch/cancel",
+      "name": "api_batch_cancel",
+      "endpoint": "api_batch_cancel",
+      "start": 2594,
+      "end": 2601,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/batch/history",
+      "name": "api_batch_history",
+      "endpoint": "api_batch_history",
+      "start": 2604,
+      "end": 2607,
+      "response_model": "typing.List[typing.Dict[str, typing.Any]]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/rights/register",
+      "name": "api_rights_register",
+      "endpoint": "api_rights_register",
+      "start": 2614,
+      "end": 2642,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/rights/revoke",
+      "name": "api_rights_revoke",
+      "endpoint": "api_rights_revoke",
+      "start": 2645,
+      "end": 2658,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/rights/audit",
+      "name": "api_rights_audit",
+      "endpoint": "api_rights_audit",
+      "start": 2661,
+      "end": 2666,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/creators/approve",
+      "name": "api_creators_approve",
+      "endpoint": "api_creators_approve",
+      "start": 2669,
+      "end": 2687,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/creators/revoke",
+      "name": "api_creators_revoke",
+      "endpoint": "api_creators_revoke",
+      "start": 2690,
+      "end": 2698,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/creators/{channel_id}",
+      "name": "api_creators_get",
+      "endpoint": "api_creators_get",
+      "start": 2701,
+      "end": 2707,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/ops/health",
+      "name": "api_ops_health",
+      "endpoint": "api_ops_health",
+      "start": 2710,
+      "end": 2732,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/external/ai-video/ingest",
+      "name": "api_external_ai_video_ingest",
+      "endpoint": "api_external_ai_video_ingest",
+      "start": 2763,
+      "end": 2792,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/external/ai-video/status/{job_id}",
+      "name": "api_external_ai_video_status",
+      "endpoint": "api_external_ai_video_status",
+      "start": 2795,
+      "end": 2831,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/webhooks/omnipost",
+      "name": "api_omnipost_webhook",
+      "endpoint": "api_omnipost_webhook",
+      "start": 2834,
+      "end": 2935,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/config/legal-officer",
+      "name": "api_get_legal_officer",
+      "endpoint": "api_get_legal_officer",
+      "start": 2942,
+      "end": 2950,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/config/legal-officer",
+      "name": "api_set_legal_officer",
+      "endpoint": "api_set_legal_officer",
+      "start": 2953,
+      "end": 2963,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/system/governor-status",
+      "name": "api_get_governor_status",
+      "endpoint": "api_get_governor_status",
+      "start": 2966,
+      "end": 2983,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/system/storage-cleanup",
+      "name": "api_trigger_storage_cleanup",
+      "endpoint": "api_trigger_storage_cleanup",
+      "start": 2986,
+      "end": 2992,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/external/ai-video/tenants",
+      "name": "api_list_ai_video_tenants",
+      "endpoint": "api_list_ai_video_tenants",
+      "start": 2995,
+      "end": 3017,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/external/ai-video/jobs",
+      "name": "api_list_ai_video_jobs",
+      "endpoint": "api_list_ai_video_jobs",
+      "start": 3020,
+      "end": 3038,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/supoclip/status",
+      "name": "api_supoclip_status",
+      "endpoint": "api_supoclip_status",
+      "start": 3059,
+      "end": 3062,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/supoclip/workflows",
+      "name": "api_supoclip_workflows",
+      "endpoint": "api_supoclip_workflows",
+      "start": 3065,
+      "end": 3071,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/supoclip/templates",
+      "name": "api_supoclip_templates",
+      "endpoint": "api_supoclip_templates",
+      "start": 3074,
+      "end": 3080,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/supoclip/fonts",
+      "name": "api_supoclip_fonts",
+      "endpoint": "api_supoclip_fonts",
+      "start": 3083,
+      "end": 3089,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/supoclip/score",
+      "name": "api_supoclip_score",
+      "endpoint": "api_supoclip_score",
+      "start": 3092,
+      "end": 3107,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/supoclip/plan",
+      "name": "api_supoclip_plan",
+      "endpoint": "api_supoclip_plan",
+      "start": 3110,
+      "end": 3125,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/supoclip/render",
+      "name": "api_supoclip_render",
+      "endpoint": "api_supoclip_render",
+      "start": 3128,
+      "end": 3184,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/supoclip/editor/trim",
+      "name": "api_supoclip_trim",
+      "endpoint": "api_supoclip_trim",
+      "start": 3187,
+      "end": 3225,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/supoclip/editor/split",
+      "name": "api_supoclip_split",
+      "endpoint": "api_supoclip_split",
+      "start": 3228,
+      "end": 3253,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "POST"
+      ],
+      "path": "/api/v1/supoclip/editor/merge",
+      "name": "api_supoclip_merge",
+      "endpoint": "api_supoclip_merge",
+      "start": 3256,
+      "end": 3298,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/supoclip/editor/presets",
+      "name": "api_supoclip_presets",
+      "endpoint": "api_supoclip_presets",
+      "start": 3301,
+      "end": 3307,
+      "response_model": "typing.Dict[str, typing.Any]",
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    },
+    {
+      "methods": [
+        "GET"
+      ],
+      "path": "/api/v1/supoclip/export/zip",
+      "name": "api_supoclip_export_zip",
+      "endpoint": "api_supoclip_export_zip",
+      "start": 3310,
+      "end": 3394,
+      "response_model": null,
+      "status_code": null,
+      "tags": [],
+      "summary": null
+    }
+  ],
+  "assignments": [
+    "logger",
+    "BASE_DIR",
+    "DATA_DIR",
+    "CLIPS_DIR",
+    "PROJECTS_DIR",
+    "TEMP_DIR",
+    "CACHE_DIR",
+    "ASSETS_DIR",
+    "DB_PATH",
+    "metadata_service",
+    "caption_synthesizer",
+    "project_store",
+    "job_manager",
+    "batch_manager",
+    "youtube_auth",
+    "video_editor",
+    "flux_generator",
+    "publisher",
+    "db_manager",
+    "resource_governor",
+    "external_ingest_service",
+    "app",
+    "_PUBLIC_UNAUTH_PATHS",
+    "_STUDIO_SESSION_COOKIE",
+    "_cors_raw",
+    "CORS_ALLOWED_ORIGINS",
+    "STATIC_DIR",
+    "_active_jobs_lock",
+    "STUDIO_SETTINGS",
+    "LANDING_HTML_PATH",
+    "DASHBOARD_HTML_PATH",
+    "DOCS_HTML_PATH",
+    "DOCS_DIR",
+    "supoclip_adapter"
+  ],
+  "helper_functions": [
+    {
+      "name": "_compute_file_sha256",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 136
+    },
+    {
+      "name": "get_active_compliance_profile",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 144
+    },
+    {
+      "name": "_prune_active_render_jobs",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 260
+    },
+    {
+      "name": "_find_closest_video_id",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 360
+    },
+    {
+      "name": "_render_video_pipeline",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 677
+    },
+    {
+      "name": "_run_render_worker",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 801
+    },
+    {
+      "name": "_execute_batch_background",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 867
+    },
+    {
+      "name": "_run_stream_to_clipper_worker",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 1051
+    },
+    {
+      "name": "_sanitize_clip_id",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 1340
+    },
+    {
+      "name": "_assert_path_in_data_dir",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 1347
+    },
+    {
+      "name": "_resolve_clip_path",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 1657
+    },
+    {
+      "name": "_authenticate_tenant",
+      "is_async": false,
+      "decorators": [],
+      "lineno": 2735
+    }
+  ],
+  "external_imports": {
+    "./src/yt_clipping/cli/commands/studio.py": [
+      "from yt_clipping.web.server import start_server"
+    ],
+    "./tests/test_batch_queue.py": [
+      "from yt_clipping.web.server import app"
+    ],
+    "./tests/test_flux_and_editor_features.py": [
+      "from yt_clipping.web.server import app, flux_generator, DATA_DIR, DB_PATH",
+      "from yt_clipping.web.server import _assert_path_in_data_dir, CLIPS_DIR",
+      "from yt_clipping.web.server import active_render_jobs, _prune_active_render_jobs"
+    ],
+    "./tests/test_multi_tenant_e2e.py": [
+      "from yt_clipping.web.server import app, db_manager, CLIPS_DIR, DATA_DIR, DB_PATH"
+    ],
+    "./tests/test_studio_web.py": [
+      "from yt_clipping.web.server import app, active_render_jobs",
+      "from yt_clipping.web.server import project_store",
+      "from yt_clipping.web.server import project_store",
+      "from yt_clipping.web.server import project_store",
+      "from yt_clipping.web.server import active_render_jobs, _prune_active_render_jobs, _active_jobs_lock",
+      "from yt_clipping.web.server import active_render_jobs, _prune_active_render_jobs, _active_jobs_lock"
+    ],
+    "./tests/test_supoclip_integration.py": [
+      "from yt_clipping.web.server import app, CLIPS_DIR, TEMP_DIR"
+    ],
+    "./tests/test_unified_api.py": [
+      "from yt_clipping.web.server import app, project_store, CLIPS_DIR, DATA_DIR, DB_PATH"
+    ]
+  },
+  "middleware": [
+    "Middleware(CORSMiddleware, allow_origins=['http://localhost:8000', 'http://127.0.0.1:8000', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:3050', 'http://127.0.0.1:3050'], allow_credentials=True, allow_methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allow_headers=['Authorization', 'Content-Type', 'X-API-Key', 'Range'])",
+    "Middleware(BaseHTTPMiddleware, dispatch=<function enforce_studio_auth at 0x0000019B67D19940>)"
+  ],
+  "lifespan": "<fastapi.routing._DefaultLifespan object at 0x0000019B5DCD2ED0>"
+}

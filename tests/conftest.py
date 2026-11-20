@@ -23,6 +23,7 @@ for _variable, _relative in {
 # Ensure testing execution mode for synthetic test harnesses
 os.environ.setdefault("YT_EXECUTION_MODE", "test")
 os.environ.setdefault("YT_ALLOW_SYNTHETIC", "1")
+os.environ.setdefault("MIN_DISK_FREE_GB", "1.0")
 
 
 @pytest.fixture(autouse=True)

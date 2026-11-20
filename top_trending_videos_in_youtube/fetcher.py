@@ -141,8 +141,8 @@ class TopTrending10MFetcher:
 
                 vid = item.get("id", "")
                 dur_sec = parse_duration_to_seconds(cd.get("duration", ""))
-                # Filter out extremely short clips (< 120s) or non-standard uploads
-                if dur_sec < 120.0:
+                # Filter out extremely short clips (< 180s = 3 mins) or non-standard uploads
+                if dur_sec < 180.0:
                     continue
 
                 views = int(st.get("viewCount", 0))
