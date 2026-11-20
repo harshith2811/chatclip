@@ -164,3 +164,6 @@ Thumbs.db
 # --- Dedicated YouTube OAuth & Credential Vault ---
 data/credentials/
 *.credentials.json
+
+# Legacy Archives
+archive/
