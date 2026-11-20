@@ -116,7 +116,8 @@ class SubtitleGenerator:
             "bold": -1,
             "outline": 7,
             "shadow": 3,
-            "margin_v": 960,                   # Center divider for Split-Screen Podcast layouts
+            "alignment": 5,                    # Center-Center seam alignment
+            "margin_v": 0,                     # Seam-anchored divider for Split-Screen Podcast layouts
             "chunk_size": 2,                   # Rapid 2-word mobile retention pacing
             "word_highlight": True,
             "bounce_animation": True,
@@ -285,6 +286,7 @@ class SubtitleGenerator:
         uppercase: Optional[bool] = None,
         keyword_emphasis: Optional[bool] = None,
         emoji_badges: Optional[bool] = None,
+        alignment: Optional[int] = None,
     ):
         self.style_preset = style_preset
         preset = self.STYLE_PRESETS.get(style_preset, self.STYLE_PRESETS["classic"])
@@ -297,6 +299,7 @@ class SubtitleGenerator:
         self.bold = preset["bold"]
         self.outline = preset["outline"]
         self.shadow = preset["shadow"]
+        self.alignment = alignment if alignment is not None else preset.get("alignment", 2)
         self.margin_v = preset["margin_v"]
         self.chunk_size = preset["chunk_size"]
         self.word_highlight = word_highlight if word_highlight is not None else preset["word_highlight"]
@@ -489,7 +492,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{self.font_name},{self.font_size},{style_primary},{style_highlight},{style_outline},{style_back},{self.bold},0,0,0,100,100,0,0,1,{self.outline},{self.shadow},2,60,60,{self.margin_v},1
+Style: Default,{self.font_name},{self.font_size},{style_primary},{style_highlight},{style_outline},{style_back},{self.bold},0,0,0,100,100,0,0,1,{self.outline},{self.shadow},{self.alignment},60,60,{self.margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

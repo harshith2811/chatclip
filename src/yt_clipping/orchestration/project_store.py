@@ -333,6 +333,31 @@ class ProjectStore:
                 except Exception as e:
                     logger.warning(f"Corrupted mirror sidecar {mirror_matches[0]}: {e}")
 
+        # 3. Content-based scan across project clips and rendered clips (matches clip_id inside JSON)
+        all_sidecars = glob.glob(os.path.join(self.projects_dir, "*", "clips", "*.json")) + glob.glob(
+            os.path.join(self.rendered_clips_dir, "*.json")
+        )
+        for sp in all_sidecars:
+            try:
+                with open(sp, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    sid = data.get("clip_id")
+                    if sid and (sid == clip_id or sid == base_cid):
+                        return ClipSidecarRecord.from_dict(data)
+            except Exception:
+                continue
+
+        # 4. Fuzzy fallback: if base_cid is substring or video_id matches
+        for sp in all_sidecars:
+            try:
+                with open(sp, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    sid = data.get("clip_id", "")
+                    if sid and (base_cid in sid or sid in base_cid):
+                        return ClipSidecarRecord.from_dict(data)
+            except Exception:
+                continue
+
         return None
 
     def list_clips(self, project_id: Optional[str] = None) -> List[ClipSidecarRecord]:

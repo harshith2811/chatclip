@@ -5,13 +5,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /** @type {import('next').NextConfig} */
-const FASTAPI_URL = process.env.FASTAPI_BACKEND_URL || 'http://localhost:8000';
-const OMNIPOST_URL = process.env.OMNIPOST_BACKEND_URL || 'http://localhost:3000';
+const FASTAPI_URL = process.env.FASTAPI_BACKEND_URL || 'http://127.0.0.1:8000';
+const OMNIPOST_URL = process.env.OMNIPOST_BACKEND_URL || 'http://127.0.0.1:3000';
 
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  outputFileTracingRoot: path.resolve(__dirname),
   images: {
     unoptimized: true,
     remotePatterns: [

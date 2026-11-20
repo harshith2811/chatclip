@@ -811,6 +811,16 @@ class ClippingPipeline:
         except Exception:
             pass
 
+        if transcript is None:
+            total_dur = heatmap_data.points[-1].end_time if (heatmap_data and heatmap_data.points) else 60.0
+            transcript = Transcript(
+                video_id=video_id,
+                language="en",
+                duration_seconds=total_dur,
+                text="",
+                segments=[],
+            )
+
         transcript = self.transcriber.load_from_cache(video_id)
         if not transcript or not transcript.segments:
             transcript = self.transcriber.transcribe(asset_path, video_id)
@@ -826,6 +836,16 @@ class ClippingPipeline:
             )
         except Exception:
             pass
+
+        if transcript is None:
+            total_dur = heatmap_data.points[-1].end_time if (heatmap_data and heatmap_data.points) else 60.0
+            transcript = Transcript(
+                video_id=video_id,
+                language="en",
+                duration_seconds=total_dur,
+                text="",
+                segments=[],
+            )
 
         try:
             candidates = self.detector.detect_candidates(
@@ -913,12 +933,20 @@ class ClippingPipeline:
         """
         manifest = self._assert_rights_valid(video_id, stage="preview_candidates")
         transcript = self.transcriber.load_from_cache(video_id)
+        if not transcript and hasattr(self.transcriber, "fetch_online_transcript"):
+            try:
+                transcript = self.transcriber.fetch_online_transcript(video_id)
+            except Exception as e:
+                logger.warning(f"Fast-path online transcript failed for {video_id}: {e}")
+
         if not transcript:
             try:
                 asset_path = self.asset_provider.resolve_asset(video_id, manifest)
-            except FileNotFoundError:
-                asset_path = self.asset_provider.download_asset(video_id, manifest)
-            transcript = self.transcriber.transcribe(asset_path, video_id)
+                transcript = self.transcriber.transcribe(asset_path, video_id)
+            except Exception:
+                # In preview mode, do not stall on multi-gigabyte media downloads.
+                # If neither cache nor online captions are available, proceed to heatmap-based candidate synthesis.
+                pass
 
         heatmap_data = None
         try:
@@ -931,6 +959,16 @@ class ClippingPipeline:
             )
         except Exception:
             pass
+
+        if transcript is None:
+            total_dur = heatmap_data.points[-1].end_time if (heatmap_data and heatmap_data.points) else 60.0
+            transcript = Transcript(
+                video_id=video_id,
+                language="en",
+                duration_seconds=total_dur,
+                text="",
+                segments=[],
+            )
 
         try:
             candidates = self.detector.detect_candidates(

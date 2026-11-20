@@ -103,6 +103,15 @@ class TrendAnalyzer:
         score_comments = min(comment_ratio / 0.35, 1.0) * 25.0
         virality_index = round(min(score_velocity + score_likes + score_comments, 100.0), 1)
 
+        # 4b. Google & YouTube Trends Search Momentum Surge
+        from .trends import trends_engine
+        try:
+            momentum = trends_engine.evaluate_topic_momentum(title)
+            if momentum.is_breakout or momentum.search_momentum_score > 60.0:
+                virality_index = round(min(virality_index * momentum.multiplier, 100.0), 1)
+        except Exception:
+            momentum = None
+
         # 5. Outlier Classification and Audience Resonance Qualification
         is_high_resonance = like_ratio >= 4.0 and (safe_views >= 500)
         resonance_note = f" High audience resonance (LVR={like_ratio:.1f}%)." if is_high_resonance else ""
@@ -148,6 +157,9 @@ class TrendAnalyzer:
             virality_index=virality_index,
             classification=classification,
             rationale=summary,
+            search_momentum_score=momentum.search_momentum_score if momentum else 50.0,
+            is_search_breakout=momentum.is_breakout if momentum else False,
+            trending_search_queries=momentum.suggested_queries if momentum else [],
         )
 
     def analyze_video_id(
@@ -235,3 +247,52 @@ class TrendAnalyzer:
             return reports[:limit]
         except Exception:
             return []
+
+    def calculate_observed_velocity_from_snapshots(
+        self, snapshots: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Calculates empirical view velocity and acceleration across consecutive historical snapshots.
+        Adheres to strict Project Dominance rule: Never infer view velocity from a single snapshot.
+        """
+        if not snapshots or len(snapshots) < 2:
+            return None
+
+        def _get_ts(s: Dict[str, Any]) -> float:
+            ts_str = str(s.get("timestamp", ""))
+            try:
+                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                return dt.timestamp()
+            except Exception:
+                return float(s.get("age_hours", 0.0)) * 3600.0
+
+        sorted_snaps = sorted(snapshots, key=_get_ts)
+        t_first = _get_ts(sorted_snaps[0])
+        t_last = _get_ts(sorted_snaps[-1])
+        delta_hours = max((t_last - t_first) / 3600.0, 0.05)
+
+        views_first = int(sorted_snaps[0].get("view_count", 0))
+        views_last = int(sorted_snaps[-1].get("view_count", 0))
+        delta_views = max(0, views_last - views_first)
+
+        observed_velocity = float(delta_views) / delta_hours
+
+        # Acceleration if >= 3 observations
+        acceleration = 0.0
+        if len(sorted_snaps) >= 3:
+            mid_idx = len(sorted_snaps) // 2
+            t_mid = _get_ts(sorted_snaps[mid_idx])
+            h1 = max((t_mid - t_first) / 3600.0, 0.05)
+            h2 = max((t_last - t_mid) / 3600.0, 0.05)
+            v1 = max(0, int(sorted_snaps[mid_idx].get("view_count", 0)) - views_first) / h1
+            v2 = max(0, views_last - int(sorted_snaps[mid_idx].get("view_count", 0))) / h2
+            acceleration = (v2 - v1) / max((h1 + h2) * 0.5, 0.1)
+
+        return {
+            "observed_velocity": round(observed_velocity, 2),
+            "delta_views": delta_views,
+            "delta_hours": round(delta_hours, 2),
+            "observations_count": len(sorted_snaps),
+            "acceleration": round(acceleration, 2),
+            "is_accelerating": acceleration > 15.0,
+        }

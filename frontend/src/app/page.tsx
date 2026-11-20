@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Image from 'next/image';
+import { cn } from '@/lib/utils';
 import { Shell } from '@/components/layout/shell';
 import { useUiStore } from '@/lib/store/ui-store';
 import { useDiscoveryStore } from '@/lib/store/discovery-store';
@@ -13,6 +14,7 @@ import {
   useVideoMetadata,
   useVideoPreview,
   useTop10mTrending,
+  useTrendingTopics,
   useRenderCandidateMutation,
   useRegenerateCaptionMutation,
 } from '@/lib/hooks/use-discovery';
@@ -102,16 +104,16 @@ export default function DashboardPage() {
     addRecentHistory,
   } = useDiscoveryStore();
 
-  // Active video analysis ID — strictly initialized to null on page load to prevent unrequested auto-loading.
-  const [activeAnalysisVideoId, setActiveAnalysisVideoId] = React.useState<string | null>(null);
-  const [hasRequestedAnalysis, setHasRequestedAnalysis] = React.useState<boolean>(false);
+  // Active video analysis ID — synchronized with discovery store
+  const [activeAnalysisVideoId, setActiveAnalysisVideoId] = React.useState<string | null>(() => currentVideoId || null);
+  const [hasRequestedAnalysis, setHasRequestedAnalysis] = React.useState<boolean>(() => !!currentVideoId);
 
   React.useEffect(() => {
-    // Only synchronize if the user explicitly triggered an analysis in this session
-    if (currentVideoId && currentVideoId !== activeAnalysisVideoId && hasRequestedAnalysis) {
+    if (currentVideoId && currentVideoId !== activeAnalysisVideoId) {
       setActiveAnalysisVideoId(currentVideoId);
+      setHasRequestedAnalysis(true);
     }
-  }, [currentVideoId, activeAnalysisVideoId, hasRequestedAnalysis]);
+  }, [currentVideoId, activeAnalysisVideoId]);
 
   // TanStack Query for Metadata and Highlights
   const {
@@ -132,6 +134,8 @@ export default function DashboardPage() {
 
   // Trending Videos for Empty/Hero State
   const { data: trendingVideos } = useTop10mTrending(6);
+  // Live Google & YouTube Trends Breakout Topics
+  const { data: trendingTopics } = useTrendingTopics('US', 8);
 
   // Action Mutations
   const renderMutation = useRenderCandidateMutation();
@@ -211,12 +215,14 @@ export default function DashboardPage() {
           }
 
           let elapsedSec = 0;
+          let consecutiveErrors = 0;
           if (pollTimerRef.current) clearInterval(pollTimerRef.current);
 
           pollTimerRef.current = setInterval(async () => {
             elapsedSec += 1.5;
             try {
               const status = await discoveryApi.getJobStatus(jobId);
+              consecutiveErrors = 0;
               if (status) {
                 const prog = typeof status.progress === 'number' ? status.progress : 0;
                 useTaskStore.getState().updateTask(taskId, {
@@ -286,7 +292,14 @@ export default function DashboardPage() {
                 }
               }
             } catch {
-              // Network retry, continue polling
+              consecutiveErrors += 1;
+              if (consecutiveErrors >= 5 || elapsedSec > 180) {
+                if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+                useTaskStore.getState().updateTask(taskId, {
+                  status: 'failed',
+                  statusText: 'Job polling paused. Check Pipeline Telemetry.',
+                });
+              }
             }
           }, 1500);
         },
@@ -427,6 +440,35 @@ export default function DashboardPage() {
             {/* 1. URL Ingestion Bar & Regex Parser */}
             <UrlIngestionBar onAnalyze={handleAnalyze} isLoading={isAnalyzing} />
 
+            {/* Live Google & YouTube Trends Breakout Radar */}
+            {trendingTopics && trendingTopics.length > 0 && (
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 text-xs">
+                <div className="flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-800 dark:text-amber-300 font-bold border border-amber-500/30">
+                  <Flame className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                  <span>Google & YT Trends:</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {trendingTopics.map((tr: any, idx: number) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setInputUrl(tr.title);
+                        showNotification(`Trend selected: "${tr.title}" (${tr.traffic_approx} searches)`, 'info');
+                      }}
+                      className="px-2.5 py-1 rounded-full bg-card hover:bg-muted border border-border/80 text-foreground font-medium shrink-0 cursor-pointer flex items-center gap-1.5 transition-colors shadow-2xs"
+                      title={`Trending search volume: ${tr.traffic_approx}`}
+                    >
+                      <span>{tr.title}</span>
+                      <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono text-muted-foreground border-border/60">
+                        {tr.traffic_approx}
+                      </Badge>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 2. Top 10M Viral Trending Modal */}
             <TrendingModal onSelectVideo={handleSelectTrending} />
 
@@ -448,7 +490,46 @@ export default function DashboardPage() {
                   isRendering={isGlobalRendering}
                   onRenderClips={handleGlobalRender}
                   onOpenStudio={() => setActiveTab('studio')}
+                  videoVelocity={(preview as any)?.video_velocity}
                 />
+
+                {/* Error Banner with 1-Click Retry (High Contrast WCAG AAA Styling) */}
+                {isPreviewError && (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 text-amber-950 dark:text-amber-100 shadow-sm">
+                    <div className="flex items-start sm:items-center gap-3">
+                      <div className="p-2 rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-400 shrink-0">
+                        <AlertCircle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-sm font-bold block text-amber-950 dark:text-amber-100">
+                          Audience Telemetry Retrieval Paused
+                        </span>
+                        <span className="text-xs text-amber-800/90 dark:text-amber-300/80 mt-0.5 block">
+                          YouTube live retention stream handshake timed out. Click Retry to re-fetch live intelligence, or proceed using synthesized transcript density below.
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+                      <Button
+                        size="sm"
+                        disabled={isPreviewLoading}
+                        className="text-xs h-8 px-3.5 bg-amber-600 hover:bg-amber-700 text-white dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-slate-950 font-semibold shadow-xs cursor-pointer flex items-center gap-1.5 transition-all"
+                        onClick={() => queryClient.invalidateQueries({ queryKey: ['video-preview'] })}
+                      >
+                        <RefreshCw className={cn("w-3.5 h-3.5", isPreviewLoading && "animate-spin")} />
+                        {isPreviewLoading ? 'Retrying Telemetry...' : 'Retry Telemetry'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs h-8 px-3 border-amber-300/80 dark:border-amber-700/60 text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 font-medium"
+                        onClick={() => setActiveTab('editor')}
+                      >
+                        Open Editor
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Interactive SVG Retention Curve */}
                 <RetentionCurve

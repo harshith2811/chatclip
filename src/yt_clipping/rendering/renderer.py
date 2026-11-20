@@ -136,9 +136,13 @@ class FFmpegRenderer(Renderer):
         if profile.layout_mode == "blur_background":
             # BUG-21 fix: split [0:v] into two distinct streams so [0:v] is never reused
             # BUG-22 fix: use scale={w}:-2 to guarantee even height on foreground
+            if getattr(profile, "fast_blur", False):
+                bg_filt = f"[in_bg]scale={w//8}:{h//8}:force_original_aspect_ratio=increase,crop={w//8}:{h//8},boxblur=4:2,scale={w}:{h}:flags=bilinear[bg];"
+            else:
+                bg_filt = f"[in_bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=25:5[bg];"
             return (
                 f"[0:v]split=2[in_bg][in_fg];"
-                f"[in_bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=25:5[bg];"
+                f"{bg_filt}"
                 f"[in_fg]scale={w}:-2[fg];"
                 f"[bg][fg]overlay=0:(H-h)/2[comp];"
                 f"[comp]setsar=1{escaped_sub}{badge_vf}{fade_vf}[v]"
@@ -148,10 +152,14 @@ class FFmpegRenderer(Renderer):
             # BUG-21 fix: split [0:v] into two distinct streams for top and bottom crops
             # BUG-22 fix: ensure half-height is an even integer
             half_h = (h // 2) if (h // 2) % 2 == 0 else (h // 2) - 1
+            top_x_val = getattr(profile, "split_top_x", None)
+            bot_x_val = getattr(profile, "split_bot_x", None)
+            top_crop_pos = f"{top_x_val}:0" if top_x_val is not None else "0:0"
+            bot_crop_pos = f"{bot_x_val}:0" if bot_x_val is not None else "iw-ow:0"
             return (
                 f"[0:v]split=2[in_top][in_bot];"
-                f"[in_top]crop=ih*9/8:ih:0:0,scale={w}:{half_h}[top];"
-                f"[in_bot]crop=ih*9/8:ih:iw-ow:0,scale={w}:{half_h}[bot];"
+                f"[in_top]crop=ih*9/8:ih:{top_crop_pos},scale={w}:{half_h}[top];"
+                f"[in_bot]crop=ih*9/8:ih:{bot_crop_pos},scale={w}:{half_h}[bot];"
                 f"[top][bot]vstack=inputs=2[stacked];"
                 f"[stacked]setsar=1{escaped_sub}{badge_vf}{fade_vf}[v]"
             )

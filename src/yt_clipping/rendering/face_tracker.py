@@ -166,6 +166,10 @@ class FaceFocusedFramer:
         prev_hist = None
         scene_cuts: List[float] = [0.0]
 
+        # Keyframe decimation optimization for high sample rates (> 6.0 FPS)
+        last_known_focal_x: Optional[float] = None
+        decimate_step = 2 if self.sample_fps > 6.0 else 1
+
         for i in range(total_frames):
             if i % frame_step != 0:
                 # Accelerated sampling: skip pixel decoding for unneeded intermediate frames
@@ -186,84 +190,93 @@ class FaceFocusedFramer:
             hist = cv2.calcHist([hsv], [0, 1], None, [32, 32], [0, 180, 0, 256])
             cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
 
+            is_scene_cut = False
             if prev_hist is not None:
                 sim = cv2.compareHist(prev_hist, hist, cv2.HISTCMP_CORREL)
                 if sim < 0.45:  # Significant visual shift indicates camera/scene cut
                     scene_cuts.append(t_rel)
+                    is_scene_cut = True
             prev_hist = hist
 
             # Detect focal point
             focal_x = None
+            run_detection = (num_samples == 1) or is_scene_cut or (num_samples % decimate_step == 0)
 
-            # 1. Primary: YuNet Deep Learning Face Detector
-            if self.yunet is not None:
-                try:
-                    h_orig, w_orig = frame.shape[:2]
-                    infer_scale = 1.0
-                    if w_orig > 960:
-                        infer_scale = 960.0 / float(w_orig)
-                        small_yunet = cv2.resize(frame, (0, 0), fx=infer_scale, fy=infer_scale)
-                    else:
-                        small_yunet = frame
+            if not run_detection and last_known_focal_x is not None:
+                focal_x = last_known_focal_x
+                face_detected_count += 1
+                subject_detected_count += 1
+            else:
+                # 1. Primary: YuNet Deep Learning Face Detector
+                if self.yunet is not None:
+                    try:
+                        h_orig, w_orig = frame.shape[:2]
+                        infer_scale = 1.0
+                        if w_orig > 960:
+                            infer_scale = 960.0 / float(w_orig)
+                            small_yunet = cv2.resize(frame, (0, 0), fx=infer_scale, fy=infer_scale)
+                        else:
+                            small_yunet = frame
 
-                    self.yunet.setInputSize((small_yunet.shape[1], small_yunet.shape[0]))
-                    _, faces = self.yunet.detect(small_yunet)
-                    if faces is not None and len(faces) > 0:
-                        if infer_scale != 1.0:
-                            faces = faces / infer_scale
-                        # Filter out micro-artifacts (avatars, browser icons, UI buttons)
-                        min_dim = float(h_orig) * self.min_face_ratio
-                        valid_faces = [f for f in faces if f[2] >= min_dim and f[3] >= min_dim]
-                        if valid_faces:
-                            best_face = max(valid_faces, key=lambda f: f[2] * f[3])
-                            fx = int(best_face[0] + best_face[2] / 2.0)
+                        self.yunet.setInputSize((small_yunet.shape[1], small_yunet.shape[0]))
+                        _, faces = self.yunet.detect(small_yunet)
+                        if faces is not None and len(faces) > 0:
+                            if infer_scale != 1.0:
+                                faces = faces / infer_scale
+                            # Filter out micro-artifacts (avatars, browser icons, UI buttons)
+                            min_dim = float(h_orig) * self.min_face_ratio
+                            valid_faces = [f for f in faces if f[2] >= min_dim and f[3] >= min_dim]
+                            if valid_faces:
+                                best_face = max(valid_faces, key=lambda f: f[2] * f[3])
+                                fx = int(best_face[0] + best_face[2] / 2.0)
+                                focal_x = fx
+                                face_detected_count += 1
+                                subject_detected_count += 1
+                                if len(valid_faces) >= 2:
+                                    fxs = sorted([f[0] + f[2] / 2.0 for f in valid_faces])
+                                    if (fxs[-1] - fxs[0]) > (crop_w * 0.75):
+                                        multi_subject_count += 1
+                    except Exception:
+                        pass
+
+                # 2. Secondary: Haar Cascade Detector
+                if focal_x is None and self.face_cascade is not None:
+                    scale = 0.5
+                    small_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
+                    gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+                    min_face_px = max(45, int(src_h * self.min_face_ratio))
+                    faces = self.face_cascade.detectMultiScale(
+                        gray,
+                        scaleFactor=1.15,
+                        minNeighbors=5,
+                        minSize=(int(min_face_px * scale), int(min_face_px * scale)),
+                    )
+                    if len(faces) > 0:
+                        valid_haar = [f for f in faces if (f[2] / scale) >= min_face_px and (f[3] / scale) >= min_face_px]
+                        if valid_haar:
+                            best_face = max(valid_haar, key=lambda f: f[2] * f[3])
+                            fx = int((best_face[0] + best_face[2] / 2.0) / scale)
                             focal_x = fx
                             face_detected_count += 1
                             subject_detected_count += 1
-                            if len(valid_faces) >= 2:
-                                fxs = sorted([f[0] + f[2] / 2.0 for f in valid_faces])
-                                if (fxs[-1] - fxs[0]) > (crop_w * 0.75):
+
+                # 3. Tertiary: YOLOv8 Person & Subject Saliency
+                if focal_x is None and self.subject_segmenter is not None:
+                    try:
+                        subjects = self.subject_segmenter.detect_subjects(frame)
+                        if subjects:
+                            subject_detected_count += 1
+                            if len(subjects) >= 2:
+                                xs = sorted([s["center_x"] for s in subjects])
+                                if (xs[-1] - xs[0]) > (crop_w * 0.80):
                                     multi_subject_count += 1
-                except Exception:
-                    pass
+                            best_subj = max(subjects, key=lambda s: s["width"] * s["height"])
+                            focal_x = int(best_subj["center_x"])
+                    except Exception:
+                        pass
 
-            # 2. Secondary: Haar Cascade Detector
-            if focal_x is None and self.face_cascade is not None:
-                scale = 0.5
-                small_frame = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
-                gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-                min_face_px = max(45, int(src_h * self.min_face_ratio))
-                faces = self.face_cascade.detectMultiScale(
-                    gray,
-                    scaleFactor=1.15,
-                    minNeighbors=5,
-                    minSize=(int(min_face_px * scale), int(min_face_px * scale)),
-                )
-                if len(faces) > 0:
-                    valid_haar = [f for f in faces if (f[2] / scale) >= min_face_px and (f[3] / scale) >= min_face_px]
-                    if valid_haar:
-                        best_face = max(valid_haar, key=lambda f: f[2] * f[3])
-                        fx = int((best_face[0] + best_face[2] / 2.0) / scale)
-                        focal_x = fx
-                        face_detected_count += 1
-                        subject_detected_count += 1
-
-            # 3. Tertiary: YOLOv8 Person & Subject Saliency
-            if self.subject_segmenter is not None:
-                try:
-                    subjects = self.subject_segmenter.detect_subjects(frame)
-                    if subjects:
-                        subject_detected_count += 1
-                        if len(subjects) >= 2:
-                            xs = sorted([s["center_x"] for s in subjects])
-                            if (xs[-1] - xs[0]) > (crop_w * 0.80):
-                                multi_subject_count += 1
-
-                        if focal_x is None:
-                            primary_subj = max(subjects, key=lambda s: s["area"])
-                            focal_x = primary_subj["center_x"]
-                except Exception:
-                    pass
+                if focal_x is not None:
+                    last_known_focal_x = focal_x
 
             raw_focal_centers.append(focal_x)
 

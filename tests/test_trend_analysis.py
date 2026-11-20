@@ -110,3 +110,30 @@ def test_steady_pace_video_classification():
 
     assert abs(report.velocity_multiplier - 1.0) < 0.1
     assert report.classification == "STEADY"
+
+
+def test_observed_velocity_from_snapshots():
+    analyzer = TrendAnalyzer()
+
+    # 3 consecutive hourly observations: 1,000 views -> 3,500 views -> 8,000 views
+    now = datetime.now(timezone.utc)
+    t0 = (now - timedelta(hours=2)).isoformat()
+    t1 = (now - timedelta(hours=1)).isoformat()
+    t2 = now.isoformat()
+
+    snapshots = [
+        {"timestamp": t0, "view_count": 1000},
+        {"timestamp": t1, "view_count": 3500},
+        {"timestamp": t2, "view_count": 8000},
+    ]
+
+    metrics = analyzer.calculate_observed_velocity_from_snapshots(snapshots)
+    assert metrics is not None
+    assert metrics["delta_views"] == 7000
+    assert abs(metrics["delta_hours"] - 2.0) < 0.1
+    # 7000 views over 2 hours = 3500 views/hr
+    assert abs(metrics["observed_velocity"] - 3500.0) < 50.0
+    assert metrics["observations_count"] == 3
+    # v1 = 2500/hr, v2 = 4500/hr -> positive acceleration
+    assert metrics["is_accelerating"] is True
+

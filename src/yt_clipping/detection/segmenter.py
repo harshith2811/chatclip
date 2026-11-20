@@ -9,6 +9,7 @@ from typing import List, Optional, Any
 import uuid
 from ..contracts.models import Transcript, TranscriptSegment, HighlightCandidate, ScoreBreakdown
 from ..contracts.interfaces import HighlightDetector
+from ..utils.timeline import snap_clip_to_words
 from .dedupe import suppress_overlapping_candidates
 
 
@@ -211,6 +212,15 @@ class ContextAwareSegmenter(HighlightDetector):
         w_start, w_end, w_dur, w_parts = window_tuple
         if w_end <= w_start or w_dur <= 0.0:
             return
+
+        all_words = transcript.get_all_words() if hasattr(transcript, "get_all_words") else []
+        if all_words:
+            w_start, w_end = snap_clip_to_words(
+                w_start, w_end, all_words, media_duration=getattr(transcript, "duration_seconds", None)
+            )
+            w_dur = round(w_end - w_start, 2)
+            if w_dur <= 0.0:
+                return
 
         full_text = " ".join(w_parts).strip()
         first_sentence = w_parts[0].strip()

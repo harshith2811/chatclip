@@ -467,6 +467,14 @@ class Transcript:
             model_version=data.get("model_version", "base"),
         )
 
+    def get_all_words(self) -> List[WordTimestamp]:
+        """Returns all word timestamps flattened across all segments in chronological order."""
+        words: List[WordTimestamp] = []
+        for s in self.segments:
+            if s.words:
+                words.extend(s.words)
+        return words
+
 
 @dataclass
 class HeatmapPoint:
@@ -546,13 +554,18 @@ class TrendReport:
     virality_index: float  # 0 to 100
     classification: str  # VIRAL_EXPLOSION, TRENDING_HIGH, ABOVE_AVERAGE, STEADY, UNDERPERFORMING
     rationale: str
+    search_momentum_score: float = 50.0
+    is_search_breakout: bool = False
+    trending_search_queries: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> TrendReport:
-        return cls(**data)
+        valid_keys = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered)
 
 
 @dataclass
@@ -676,6 +689,9 @@ class RenderProfile:
     audio_fade_out_seconds: float = 0.25  # 250ms outro audio transition
     video_fade_in_seconds: float = 0.15   # 150ms subtle hook fade-in
     video_fade_out_seconds: float = 0.25  # 250ms outro video transition
+    split_top_x: Optional[int] = None     # Dynamic centroid offset for top speaker in split_screen
+    split_bot_x: Optional[int] = None     # Dynamic centroid offset for bottom speaker in split_screen
+    fast_blur: bool = False               # High-efficiency bokeh pyramid downsampled blur (5x-8x faster rendering)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -702,6 +718,9 @@ class RenderProfile:
         data_copy.setdefault("audio_fade_out_seconds", 0.25)
         data_copy.setdefault("video_fade_in_seconds", 0.15)
         data_copy.setdefault("video_fade_out_seconds", 0.25)
+        data_copy.setdefault("split_top_x", None)
+        data_copy.setdefault("split_bot_x", None)
+        data_copy.setdefault("fast_blur", False)
         return cls(**data_copy)
 
 

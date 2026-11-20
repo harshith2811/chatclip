@@ -24,6 +24,7 @@ import {
   Search,
   Sliders,
   Check,
+  Subtitles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { usePlaybackStore } from '@/lib/store/playback-store';
@@ -49,6 +50,11 @@ interface PhonePlayerProps {
   likeCount?: number;
   commentCount?: number;
   layoutMode?: 'active_speaker' | 'blur_background' | 'split_screen';
+  captionStyle?: string;
+  onLayoutChange?: (layout: 'active_speaker' | 'blur_background' | 'split_screen') => void;
+  onCaptionStyleChange?: (style: string) => void;
+  transcript?: any;
+  isRendered?: boolean;
   className?: string;
 }
 
@@ -63,6 +69,11 @@ export function PhonePlayer({
   likeCount,
   commentCount,
   layoutMode = 'active_speaker',
+  captionStyle: captionStyleProp,
+  onLayoutChange,
+  onCaptionStyleChange,
+  transcript,
+  isRendered = false,
   className,
 }: PhonePlayerProps) {
   const videoRef = React.useRef<HTMLVideoElement>(null);
@@ -74,16 +85,105 @@ export function PhonePlayer({
   const [isMuted, setIsMuted] = React.useState(false);
   const [showNotch, setShowNotch] = React.useState(true);
   const [safeZonePlatform, setSafeZonePlatform] = React.useState<SafeZonePlatform>('none');
-  const [activeLayout, setActiveLayout] = React.useState<'active_speaker' | 'blur_background'>(
-    layoutMode === 'blur_background' ? 'blur_background' : 'active_speaker'
+  const [internalLayout, setInternalLayout] = React.useState<'active_speaker' | 'blur_background' | 'split_screen'>(
+    layoutMode || 'active_speaker'
   );
+  const [internalCaptionStyle, setInternalCaptionStyle] = React.useState<string>(captionStyleProp || 'hormozi');
+
+  React.useEffect(() => {
+    if (layoutMode) setInternalLayout(layoutMode);
+  }, [layoutMode]);
+
+  React.useEffect(() => {
+    if (captionStyleProp) setInternalCaptionStyle(captionStyleProp);
+  }, [captionStyleProp]);
+
+  const activeLayout = internalLayout;
+  const captionStyle = internalCaptionStyle;
+
+  const handleLayoutChange = (l: 'active_speaker' | 'blur_background' | 'split_screen') => {
+    setInternalLayout(l);
+    if (onLayoutChange) onLayoutChange(l);
+  };
+
+  const handleCaptionStyleChange = (s: string) => {
+    setInternalCaptionStyle(s);
+    if (onCaptionStyleChange) onCaptionStyleChange(s);
+  };
+
   const [playbackRate, setPlaybackRate] = React.useState<number>(1);
   const [showCenterFeedback, setShowCenterFeedback] = React.useState(false);
+  const [showCaptions, setShowCaptions] = React.useState(true);
+
+  // Flatten word-level timestamps from transcript
+  const allWords = React.useMemo(() => {
+    if (!transcript?.segments) return [];
+    const words: Array<{ word: string; start: number; end: number }> = [];
+    for (const seg of transcript.segments) {
+      if (seg.words && seg.words.length > 0) {
+        for (const w of seg.words) {
+          words.push({
+            word: w.word,
+            start: Number(w.start),
+            end: Number(w.end),
+          });
+        }
+      } else if (seg.text) {
+        const parts = seg.text.trim().split(/\s+/);
+        const dur = Math.max(0.1, (Number(seg.end) - Number(seg.start)) / Math.max(1, parts.length));
+        parts.forEach((p: string, idx: number) => {
+          words.push({
+            word: p,
+            start: Number(seg.start) + idx * dur,
+            end: Number(seg.start) + (idx + 1) * dur,
+          });
+        });
+      }
+    }
+    return words;
+  }, [transcript]);
+
+  // Determine active phrase & active word index at current video time
+  const activeCaption = React.useMemo(() => {
+    if (!showCaptions || isRendered || allWords.length === 0) return null;
+    const currentAbsoluteTime = startTime + relativeTime;
+
+    // Find exact matching word
+    const matchIdx = allWords.findIndex(
+      (w) => w.start <= currentAbsoluteTime && currentAbsoluteTime <= w.end + 0.15
+    );
+
+    if (matchIdx !== -1) {
+      // Create a 3-4 word phrase window around the active word
+      const startIdx = Math.max(0, matchIdx - 1);
+      const endIdx = Math.min(allWords.length, matchIdx + 3);
+      const phrase = allWords.slice(startIdx, endIdx);
+      return {
+        phrase,
+        activeWord: allWords[matchIdx].word,
+        activeStart: allWords[matchIdx].start,
+      };
+    }
+
+    // Near-gap fallback: find closest words within highlight window
+    const recent = allWords.filter(
+      (w) => w.start >= startTime && w.end <= (endTime || startTime + duration) && Math.abs(w.start - currentAbsoluteTime) < 1.2
+    );
+    if (recent.length > 0) {
+      return {
+        phrase: recent.slice(0, 3),
+        activeWord: recent[0].word,
+        activeStart: recent[0].start,
+      };
+    }
+
+    return null;
+  }, [showCaptions, isRendered, allWords, startTime, relativeTime, endTime, duration]);
 
   // Synchronize layout if prop changes
   React.useEffect(() => {
-    if (layoutMode === 'blur_background') {
-      setActiveLayout('blur_background');
+    if (layoutMode) {
+      setInternalLayout(layoutMode);
     }
   }, [layoutMode]);
 
@@ -260,7 +360,7 @@ export function PhonePlayer({
           <div className="flex items-center gap-1 p-0.5 rounded-lg bg-muted/60 border border-border/60">
             <button
               type="button"
-              onClick={() => setActiveLayout('active_speaker')}
+              onClick={() => handleLayoutChange('active_speaker')}
               className={cn(
                 'px-2 py-0.5 rounded text-[10px] font-semibold transition-all cursor-pointer',
                 activeLayout === 'active_speaker'
@@ -272,7 +372,7 @@ export function PhonePlayer({
             </button>
             <button
               type="button"
-              onClick={() => setActiveLayout('blur_background')}
+              onClick={() => handleLayoutChange('blur_background')}
               className={cn(
                 'px-2 py-0.5 rounded text-[10px] font-semibold transition-all cursor-pointer',
                 activeLayout === 'blur_background'
@@ -316,6 +416,54 @@ export function PhonePlayer({
         </div>
       </div>
 
+      {/* Dynamic Subtitles & Typography Style Toolbar */}
+      <div className="w-full flex items-center justify-between text-xs px-1 pt-1 gap-2 border-t border-border/40">
+        <div className="flex items-center gap-1.5">
+          <span className="font-semibold text-muted-foreground uppercase tracking-wider text-[10px] font-mono flex items-center gap-1">
+            <Subtitles className="w-3 h-3 text-primary" />
+            Captions:
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowCaptions(!showCaptions)}
+            className={cn(
+              'px-2 py-0.5 rounded text-[10px] font-semibold transition-all cursor-pointer font-mono',
+              showCaptions
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold'
+                : 'bg-muted/60 text-muted-foreground hover:text-foreground border border-border/60'
+            )}
+          >
+            {showCaptions ? 'ON' : 'OFF'}
+          </button>
+        </div>
+
+        {showCaptions && (
+          <div className="flex items-center gap-1 p-0.5 rounded-lg bg-muted/60 border border-border/60">
+            {[
+              { id: 'hormozi', label: 'Hormozi' },
+              { id: 'mrbeast', label: 'MrBeast' },
+              { id: 'tiktok', label: 'TikTok' },
+              { id: 'neon', label: 'Neon' },
+              { id: 'clean', label: 'Clean' },
+            ].map((st) => (
+              <button
+                key={st.id}
+                type="button"
+                onClick={() => handleCaptionStyleChange(st.id)}
+                className={cn(
+                  'px-1.5 py-0.5 rounded text-[9px] font-semibold transition-all cursor-pointer',
+                  captionStyle === st.id
+                    ? 'bg-primary text-primary-foreground shadow-xs font-bold'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {st.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Titanium Smartphone Chassis (iPhone 16 Pro 9:16 Aspect) */}
       <div
         ref={containerRef}
@@ -342,6 +490,7 @@ export function PhonePlayer({
                   ref={bgVideoRef}
                   src={videoUrl}
                   playsInline
+                  preload="auto"
                   muted
                   aria-hidden="true"
                   className="absolute inset-0 w-full h-full object-cover filter blur-2xl scale-110 brightness-60 pointer-events-none select-none"
@@ -352,7 +501,16 @@ export function PhonePlayer({
                   src={videoUrl}
                   poster={posterUrl}
                   playsInline
+                  preload="auto"
                   muted={isMuted}
+                  onLoadedData={(e) => {
+                    const el = e.currentTarget;
+                    if (startTime > 0 && Math.abs(el.currentTime - startTime) > 0.5) {
+                      el.currentTime = startTime;
+                    } else if (el.currentTime === 0) {
+                      el.currentTime = 0.05;
+                    }
+                  }}
                   onTimeUpdate={() => {
                     handleTimeUpdate();
                     syncBgVideo();
@@ -369,7 +527,16 @@ export function PhonePlayer({
                 src={videoUrl}
                 poster={posterUrl}
                 playsInline
+                preload="auto"
                 muted={isMuted}
+                onLoadedData={(e) => {
+                  const el = e.currentTarget;
+                  if (startTime > 0 && Math.abs(el.currentTime - startTime) > 0.5) {
+                    el.currentTime = startTime;
+                  } else if (el.currentTime === 0) {
+                    el.currentTime = 0.05;
+                  }
+                }}
                 onTimeUpdate={handleTimeUpdate}
                 onEnded={() => setIsPlaying(false)}
                 className="w-full h-full object-cover cursor-pointer"
@@ -406,6 +573,63 @@ export function PhonePlayer({
             >
               <div className="w-14 h-14 rounded-full bg-primary text-primary-foreground flex items-center justify-center shadow-xl group-hover:scale-110 transition-transform">
                 <Play className="w-6 h-6 ml-1 fill-current" />
+              </div>
+            </div>
+          )}
+
+          {/* Real-Time Hormozi / Viral Subtitles Overlay (for preview before burn-in) */}
+          {activeCaption && activeCaption.phrase.length > 0 && (
+            <div className="absolute bottom-[28%] inset-x-2 flex justify-center items-center pointer-events-none z-35 px-2">
+              <div
+                className={cn(
+                  'flex flex-wrap items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl shadow-2xl backdrop-blur-md transition-all duration-75 text-center max-w-[90%]',
+                  (captionStyle === 'hormozi' || captionStyle === 'default') && 'bg-black/90 border border-yellow-400/50 font-black tracking-wider uppercase',
+                  captionStyle === 'mrbeast' && 'bg-black/95 border border-red-500/60 font-black uppercase tracking-wide',
+                  captionStyle === 'tiktok' && 'bg-black/90 border border-pink-500/50 font-extrabold tracking-wide',
+                  captionStyle === 'neon' && 'bg-slate-950/95 border border-fuchsia-500/60 font-black uppercase tracking-widest',
+                  captionStyle === 'podcast' && 'bg-black/85 border border-amber-400/40 font-bold',
+                  (captionStyle === 'clean' || captionStyle === 'minimal') && 'bg-black/80 border border-white/20 font-semibold text-sm',
+                  captionStyle === 'cyan' && 'bg-slate-950/90 border border-cyan-400/50 font-extrabold tracking-wide uppercase',
+                  captionStyle === 'fire' && 'bg-black/90 border border-orange-500/50 font-black uppercase tracking-wide'
+                )}
+              >
+                {activeCaption.phrase.map((w, idx) => {
+                  const isHighlighted = w.word === activeCaption.activeWord && w.start === activeCaption.activeStart;
+                  return (
+                    <span
+                      key={`${w.word}-${idx}`}
+                      className={cn(
+                        'transition-all duration-75 inline-block text-sm sm:text-base font-black',
+                        // Hormozi / Default
+                        isHighlighted && (captionStyle === 'hormozi' || captionStyle === 'default') && 'text-yellow-400 scale-110 drop-shadow-[0_0_12px_rgba(250,204,21,0.9)] underline decoration-yellow-400 decoration-2',
+                        !isHighlighted && (captionStyle === 'hormozi' || captionStyle === 'default') && 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]',
+                        // MrBeast
+                        isHighlighted && captionStyle === 'mrbeast' && 'text-red-500 scale-115 drop-shadow-[0_0_14px_rgba(239,68,68,1)] font-black',
+                        !isHighlighted && captionStyle === 'mrbeast' && 'text-sky-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] font-bold',
+                        // TikTok
+                        isHighlighted && captionStyle === 'tiktok' && 'text-rose-400 scale-110 drop-shadow-[0_0_12px_rgba(251,113,133,0.9)]',
+                        !isHighlighted && captionStyle === 'tiktok' && 'text-white',
+                        // Neon Glow
+                        isHighlighted && captionStyle === 'neon' && 'text-fuchsia-400 scale-115 drop-shadow-[0_0_16px_rgba(232,121,249,1)]',
+                        !isHighlighted && captionStyle === 'neon' && 'text-cyan-300 drop-shadow-[0_0_6px_rgba(103,232,249,0.7)]',
+                        // Podcast
+                        isHighlighted && captionStyle === 'podcast' && 'text-amber-300 scale-110 drop-shadow-[0_0_10px_rgba(252,211,77,0.8)]',
+                        !isHighlighted && captionStyle === 'podcast' && 'text-stone-200',
+                        // Clean / Minimal
+                        isHighlighted && (captionStyle === 'clean' || captionStyle === 'minimal') && 'text-primary font-bold scale-105 drop-shadow-[0_0_8px_rgba(255,255,255,0.7)]',
+                        !isHighlighted && (captionStyle === 'clean' || captionStyle === 'minimal') && 'text-white/90',
+                        // Cyan
+                        isHighlighted && captionStyle === 'cyan' && 'text-cyan-300 scale-110 drop-shadow-[0_0_12px_rgba(34,211,238,0.9)]',
+                        !isHighlighted && captionStyle === 'cyan' && 'text-slate-200',
+                        // Fire
+                        isHighlighted && captionStyle === 'fire' && 'text-amber-400 scale-110 drop-shadow-[0_0_12px_rgba(251,146,60,0.9)]',
+                        !isHighlighted && captionStyle === 'fire' && 'text-white'
+                      )}
+                    >
+                      {w.word}
+                    </span>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -25,6 +25,7 @@ from ..contracts.models import (
     HeatmapData,
 )
 from ..detection.segmenter import ContextAwareSegmenter
+from ..utils.timeline import snap_clip_to_words
 from .scorecard import ExplainableScorecardScorer
 
 logger = logging.getLogger(__name__)
@@ -462,6 +463,13 @@ class GeminiHighlightDiscoveryProvider(HighlightDetector, HighlightScorer):
                     if start >= total_duration:
                         continue
                     end = min(end, total_duration)
+
+                # Snap candidate boundaries to spoken word boundaries to prevent mid-syllable cuts
+                all_words = transcript.get_all_words() if hasattr(transcript, "get_all_words") else []
+                if all_words:
+                    start, end = snap_clip_to_words(
+                        start, end, all_words, media_duration=total_duration if total_duration > 0.0 else None
+                    )
 
                 dur = round(end - start, 2)
 

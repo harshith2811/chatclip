@@ -1,0 +1,956 @@
+# MASTER DIRECTIVE: MULTI-AGENT SYSTEM AUDIT, REMEDIATION & PRODUCTION READINESS
+
+## PROJECT
+**YouTube Clipping Intelligence**
+
+**Frontend:** Next.js 15  
+**Backend:** FastAPI  
+**Frontend Port:** 3050  
+**Backend Port:** 8000
+
+**MISSION TYPE:** Autonomous Multi-Agent Engineering Operation  
+**EXECUTION MODE:** Parallel Auditing → Independent Remediation → Integration → System-Wide Validation
+
+---
+
+# 1. PRIMARY MISSION
+
+Transform the existing YouTube Clipping Intelligence application into a polished, reliable, production-ready platform.
+
+This is not a simple UI review.
+
+You are responsible for auditing, repairing, integrating, and validating the entire application across all seven primary sidebar sections.
+
+Every page must satisfy four requirements:
+
+1. **Visual Excellence:** Premium, cohesive, professional light-theme interface.
+2. **Functional Integrity:** Every button, control, interaction, modal, slider, and workflow must work.
+3. **Backend Integrity:** Every operation must communicate with the correct real backend service.
+4. **Engineering Reliability:** No broken routes, runtime errors, silent failures, mock implementations, or regressions.
+
+You must inspect the existing codebase before making assumptions.
+
+Do not rebuild functioning systems unnecessarily. Preserve working architecture, improve weak implementations, and repair actual defects.
+
+Your objective is to leave the repository in a demonstrably better state than you found it.
+
+---
+
+# 2. MULTI-AGENT ORGANIZATION
+
+## REQUIRED AGENT STRUCTURE
+
+Spawn eight specialized agents.
+
+Seven agents own individual application sections. One agent acts as the Principal Orchestrator and maintains responsibility for the entire operation.
+
+### AGENT 0 — PRINCIPAL ORCHESTRATOR
+
+**Role:** Engineering Lead, Integration Manager, Quality Controller.
+
+This agent must NOT behave like another ordinary tab developer.
+
+Its primary responsibility is to coordinate, monitor, validate, and manage the entire operation.
+
+Responsibilities:
+
+- Inspect the repository architecture before delegating work.
+- Understand frontend/backend boundaries and existing API contracts.
+- Spawn and assign the seven specialized agents.
+- Give each agent a clearly defined scope.
+- Establish shared engineering conventions.
+- Maintain a centralized progress tracker.
+- Monitor agent execution continuously.
+- Identify blockers and resolve cross-agent dependencies.
+- Prevent multiple agents from modifying the same files simultaneously.
+- Review implementation reports and test evidence.
+- Verify that agents have actually completed their assignments.
+- Detect regressions introduced by parallel changes.
+- Coordinate final integration and system-wide testing.
+
+### CENTRAL PROGRESS TRACKER
+
+Maintain a live progress document:
+
+`AUDIT_PROGRESS.md`
+
+Track the following for every agent:
+
+| Field | Description |
+|---|---|
+| Agent | Assigned specialist |
+| Section | Owned application tab |
+| Audit | Pending / In Progress / Complete |
+| UI | Pending / In Progress / Complete |
+| Backend | Pending / In Progress / Complete |
+| Tests | Pending / In Progress / Complete |
+| Blockers | Current issues |
+| Files Changed | Modified files |
+| Verification | Evidence of successful validation |
+| Final Status | Pending / Passed / Failed |
+
+Update this document whenever a meaningful milestone is reached.
+
+Do not mark work complete merely because an agent says it is complete.
+
+Require implementation evidence, test results, and actual verification.
+
+The orchestrator must also maintain:
+
+- `AUDIT_FINDINGS.md`
+- `AGENT_HANDOFFS.md`
+- `INTEGRATION_REPORT.md`
+
+These documents must contain actual findings rather than generic status messages.
+
+---
+
+# 3. SPECIALIZED AGENT ASSIGNMENTS
+
+## AGENT 1 — VIRAL DISCOVERY
+
+**Route:** `/`  
+**Ownership:** Viral Discovery and initial video ingestion.
+
+Audit and improve:
+
+- YouTube URL ingestion.
+- Video ID extraction and validation.
+- Recent video history.
+- Trending discovery modal.
+- Video metadata retrieval.
+- Audience retention visualization.
+- Candidate highlight grid.
+- Virality metrics.
+- Render dispatch.
+
+### Functional requirements
+
+1. Support standard YouTube URLs, youtu.be links, Shorts URLs, and raw video IDs.
+2. Validate malformed inputs and provide useful inline errors.
+3. Retrieve genuine video metadata.
+4. Display actual thumbnails, titles, channel information, and video statistics.
+5. Retrieve trending information from the actual backend.
+6. Render retention curves using real or explicitly documented derived data.
+7. Support interactive retention scrubbing.
+8. Highlight corresponding candidate clips.
+9. Open candidate clips directly in the Video Editor with the correct timecodes.
+10. Trigger individual clip rendering through the actual rendering pipeline.
+
+### Backend verification
+
+Inspect and verify relevant endpoints, including:
+
+- `POST /api/v1/metadata`
+- `POST /api/v1/preview`
+- `GET /api/v1/trending/top10m`
+- `POST /api/v1/render`
+- `POST /api/v1/clips/{id}/regenerate_caption`
+
+Do not assume these endpoints exist. Verify the actual implementation and correct contracts.
+
+**Deliverable:** Fully functional Viral Discovery section with verified ingestion, analysis, candidate selection, and render dispatch.
+
+---
+
+## AGENT 2 — STUDIO WORKSPACE
+
+**Route:** `/studio`  
+**Ownership:** AI-assisted clipping and creative workspace.
+
+Audit and improve:
+
+- SupoClip workflow controller.
+- Objective selection.
+- Composition presets.
+- Animated caption presets.
+- 9:16 smartphone preview.
+- Ambient flowing blur.
+- Platform safe zones.
+- Virality diagnostics.
+- Creator feedback.
+- Caption generation and attribution.
+
+### Functional requirements
+
+1. Support different workflow objectives:
+   - Viral Highlights
+   - Episodic Series
+   - Topic Deep-Dive
+   - Executive Recap
+
+2. Verify composition modes:
+   - AI Smart Crop
+   - Ambient Flowing Blur
+   - Split Screen Stack
+
+3. Verify caption styles:
+   - Hormozi
+   - MrBeast
+   - Minimal
+   - TikTok
+   - Neon
+   - Podcast
+
+4. Connect workflow planning to the actual SupoClip engine.
+5. Display planned segment windows from backend responses.
+6. Ensure video playback works correctly.
+7. Synchronize foreground video, background blur, subtitles, and controls.
+8. Implement platform-specific safe-zone overlays.
+9. Display genuine virality diagnostics.
+10. Save creator feedback through the backend.
+11. Make caption copying work with appropriate feedback.
+
+### Backend verification
+
+Inspect:
+
+- `GET /api/v1/clips`
+- `GET /api/v1/clips/{id}/media`
+- `POST /api/v1/supoclip/plan`
+- `POST /api/v1/supoclip/score`
+- `POST /api/v1/analytics/feedback`
+
+**Deliverable:** A fully operational creative workspace with synchronized media, real AI workflow integration, and polished editing controls.
+
+---
+
+## AGENT 3 — VIDEO EDITOR
+
+**Route:** `/editor`  
+**Ownership:** Complete editing experience.
+
+This section requires particular attention because it contains several synchronized interactive components.
+
+Audit and improve:
+
+- Original video canvas.
+- Playback transport.
+- Crop bounding box.
+- AI framing presets.
+- Audio waveform.
+- In/Out markers.
+- Transcript editing.
+- Timecode synchronization.
+- 9:16 preview.
+- Title and subtitle overlays.
+- Export workflow.
+
+### Functional requirements
+
+**A. Playback**
+
+- Play / Pause.
+- Rewind 10 seconds.
+- Forward 10 seconds.
+- Step backward and forward.
+- Jump to beginning.
+- Playback speeds: 1x, 1.25x, 1.5x, 2x.
+- Mute / Unmute.
+- Fullscreen.
+
+**B. Crop and framing**
+
+- Interactive 9:16 crop rectangle.
+- Dragging and positioning.
+- Live coordinate feedback.
+- AI Smart Center.
+- Left, Center, Right presets.
+- Ambient Blur.
+
+**C. Waveform**
+
+- Actual audio-derived waveform where available.
+- Interactive scrubbing.
+- In/Out markers.
+- Keyboard shortcuts.
+- 30-second cut.
+- 60-second cut.
+- Full-video reset.
+
+**D. Transcript**
+
+- Retrieve genuine Whisper transcript data.
+- Display word-level timestamps when available.
+- Search transcript.
+- Hooks-only filtering.
+- Click-to-seek.
+- Set In / Set Out.
+- Cut selected sentence.
+
+**E. Preview and export**
+
+- Synchronized 9:16 preview.
+- Editable title overlays.
+- Caption style selection.
+- Apply Crop & Render.
+- Real export task creation.
+- Meaningful export progress and error handling.
+
+### Critical ergonomic requirement
+
+The editor must remain usable without unnecessary parent-page scrolling.
+
+All synchronized components must share a reliable playback and timecode state.
+
+Avoid duplicate playback engines or competing state sources.
+
+### Backend verification
+
+Inspect:
+
+- `GET /api/v1/source/{video_id}`
+- `GET /api/v1/source/{video_id}/transcript`
+- `POST /api/v1/editor/export`
+
+**Deliverable:** A reliable, synchronized, professional-grade browser-based clipping editor.
+
+---
+
+## AGENT 4 — PROJECTS ARCHIVE
+
+**Route:** `/projects`
+
+Audit and improve:
+
+- Project retrieval.
+- Project cards.
+- Search and filters.
+- Project status.
+- Project inspection modal.
+- Clip playback.
+- Single downloads.
+- Batch ZIP downloads.
+- Project deletion.
+
+### Functional requirements
+
+1. Load actual saved projects.
+2. Display real thumbnails and project metadata.
+3. Search by project title and video ID.
+4. Filter Completed, In Progress, and Failed projects.
+5. Open project details.
+6. Play rendered clips.
+7. Download individual clips.
+8. Open selected clips in Studio.
+9. Download multiple clips as a ZIP.
+10. Delete projects with confirmation.
+11. Correctly invalidate cached data after mutations.
+
+### Backend verification
+
+Inspect:
+
+- `GET /api/v1/projects`
+- `GET /api/v1/projects/{id}`
+- `DELETE /api/v1/projects/{id}`
+- `GET /api/v1/supoclip/export/zip`
+
+**Deliverable:** A persistent, fully functional project management and archive experience.
+
+---
+
+## AGENT 5 — OMNIPOST PUBLISHING
+
+**Route:** `/publishing`
+
+Audit and improve:
+
+- Social channel connections.
+- OAuth status.
+- Video selection.
+- Platform metadata.
+- Character counters.
+- Instant publishing.
+- Scheduling.
+- Publication history.
+- Retry workflows.
+
+### Functional requirements
+
+1. Retrieve real connected-channel information.
+2. Display accurate authorization states.
+3. Verify Google OAuth integration.
+4. Support YouTube Shorts, TikTok, and Instagram Reels according to actual integration availability.
+5. Automatically populate metadata from selected clips.
+6. Validate platform-specific title and caption limits.
+7. Implement accurate character counters.
+8. Implement Publish Now.
+9. Implement future scheduling with timezone-aware validation.
+10. Display actual publication history.
+11. Support retrying eligible failed publications.
+12. Display meaningful success and failure states.
+
+### Backend verification
+
+Inspect:
+
+- `GET /api/v1/publish/channels`
+- `POST /api/v1/publish/submit`
+- `GET /api/v1/publish/history`
+- `GET /api/v1/auth/google/status`
+- `POST /api/v1/publish/retry/{receipt_id}`
+
+**Important:** Never simulate successful publishing. A queued request, successful API submission, and confirmed platform publication are three different states.
+
+**Deliverable:** A genuinely integrated social publishing dashboard.
+
+---
+
+## AGENT 6 — PROCESSING PIPELINE
+
+**Route:** `/pipeline`
+
+Audit and improve:
+
+- Processing task queue.
+- Render status.
+- GPU telemetry.
+- CPU telemetry.
+- NVENC availability.
+- Live progress.
+- Pipeline stage visualization.
+- SSE connections.
+- Job cancellation.
+- Error handling.
+
+### Functional requirements
+
+1. Display actual processing tasks.
+2. Retrieve real hardware health information.
+3. Display GPU availability and encoder capabilities.
+4. Distinguish NVENC from CPU-based encoding.
+5. Display active worker information where exposed by the backend.
+6. Implement live task updates.
+7. Correctly handle SSE connection and reconnection.
+8. Show actual processing stages.
+9. Display useful error details.
+10. Allow cancellation of eligible jobs.
+11. Reflect cancelled, failed, completed, and active states correctly.
+
+### Expected pipeline stages
+
+- Video Ingestion.
+- Whisper Word-Level ASR.
+- Retention Analysis.
+- Face / Motion Tracking.
+- 9:16 Crop Synthesis.
+- Subtitle Rendering.
+- Final Quality Control.
+- Packaging.
+
+Only display stages supported by actual processing architecture. Do not invent stage completion.
+
+### Backend verification
+
+Inspect:
+
+- `GET /api/v1/render/status/{task_id}`
+- `GET /api/v1/jobs/{job_id}/stream`
+- `POST /api/v1/jobs/{job_id}/cancel`
+- `GET /api/v1/ops/health`
+
+**Deliverable:** A real-time processing observability dashboard with reliable task lifecycle management.
+
+---
+
+## AGENT 7 — SETTINGS & TELEMETRY
+
+**Route:** `/settings`
+
+Audit and improve:
+
+- API key configuration.
+- Provider connectivity.
+- Storage governor.
+- Disk usage.
+- Cache management.
+- FLUX configuration.
+- B-roll provider settings.
+- Persistent preferences.
+- System cleanup.
+
+### Functional requirements
+
+1. Retrieve saved settings.
+2. Support secure Gemini API key configuration.
+3. Support YouTube API key configuration.
+4. Implement show/hide password controls.
+5. Implement actual provider connectivity tests.
+6. Display accurate system health.
+7. Display storage usage and cache size.
+8. Implement temporary cache cleanup.
+9. Verify FLUX provider availability.
+10. Verify configured fallback behavior.
+11. Persist preferences.
+12. Verify settings survive a browser refresh.
+
+### Security requirements
+
+- Never expose API secrets in browser logs.
+- Never commit credentials.
+- Never return secret values unnecessarily from backend endpoints.
+- Never display secrets in telemetry.
+- Preserve existing environment variable and secret-management conventions.
+
+### Backend verification
+
+Inspect:
+
+- `GET /api/v1/settings`
+- `POST /api/v1/settings`
+- `GET /api/v1/system/governor-status`
+- `POST /api/v1/system/storage-cleanup`
+- `GET /api/v1/flux/status`
+
+**Deliverable:** A secure, reliable settings and system telemetry dashboard.
+
+---
+
+# 4. SHARED DESIGN SYSTEM & VISUAL QUALITY CONTRACT
+
+All seven agents must follow one consistent design language.
+
+The application must feel like one carefully designed product rather than seven independently developed pages.
+
+## Theme
+
+**Light theme is the primary design direction.**
+
+Requirements:
+
+- Consistent light surfaces.
+- Sophisticated neutral backgrounds.
+- Clear typography hierarchy.
+- Restrained use of blue accent colors.
+- Subtle borders and shadows.
+- Consistent corner radii.
+- Professional iconography.
+- Clear visual grouping.
+- High-contrast interactive controls.
+- Consistent loading, empty, success, and error states.
+
+Avoid:
+
+- Unnecessary gradients.
+- Excessive glassmorphism.
+- Random colored cards.
+- Overly rounded components.
+- Excessive borders.
+- Dark patches inside light-theme layouts.
+- Generic AI-generated dashboard aesthetics.
+- Decorative elements without functional purpose.
+
+Video viewports can remain black.
+
+The surrounding interface must respect the light-theme design system.
+
+## Shared component consistency
+
+All agents must reuse existing shared components and tokens wherever possible.
+
+Before introducing a new component:
+
+1. Search for an existing equivalent.
+2. Check whether it can be extended.
+3. Avoid duplicate implementations.
+4. Preserve existing shared component contracts.
+
+## Interaction quality
+
+Every interactive control must have:
+
+- A clear purpose.
+- A visible interaction state.
+- Correct disabled states.
+- Loading feedback when appropriate.
+- Success feedback.
+- Useful error feedback.
+- Keyboard accessibility where applicable.
+
+No decorative controls pretending to be functional.
+
+---
+
+# 5. ZERO-MOCK AND DATA INTEGRITY POLICY
+
+This is a strict requirement.
+
+Do not introduce fake functionality to make the UI appear complete.
+
+Prohibited:
+
+- Hardcoded fake project records.
+- Fake trending videos.
+- Dummy transcript sentences.
+- Artificially generated waveform data presented as actual audio.
+- Fake GPU utilization.
+- Simulated publishing success.
+- Hardcoded successful API responses.
+- Mock fallback data in production paths.
+
+If the backend does not provide a capability:
+
+1. Identify the missing backend functionality.
+2. Inspect whether an existing service can provide it.
+3. Implement the missing functionality if it is within scope.
+4. Otherwise expose an honest unavailable state.
+5. Document the limitation.
+
+Test fixtures and mocks are permitted in isolated automated tests, but must never silently become production data.
+
+---
+
+# 6. MULTI-AGENT COORDINATION PROTOCOL
+
+Parallel execution is mandatory, but uncontrolled parallel editing is prohibited.
+
+## Phase A — Initial reconnaissance
+
+Before implementation:
+
+1. Inspect repository structure.
+2. Identify frontend routing.
+3. Identify shared components.
+4. Inspect backend routes.
+5. Inspect database models.
+6. Identify state-management architecture.
+7. Identify API client conventions.
+8. Identify existing tests.
+9. Identify build and development commands.
+
+The orchestrator creates a shared architecture map.
+
+## Phase B — Parallel independent audits
+
+Spawn all seven tab agents.
+
+Each agent must initially inspect its assigned section and report:
+
+- Existing implementation.
+- Broken functionality.
+- Missing functionality.
+- UI/UX problems.
+- API mismatches.
+- State-management issues.
+- Security concerns.
+- Test coverage gaps.
+- Dependencies on other sections.
+
+Do not immediately start seven uncontrolled rewrites.
+
+Establish findings first.
+
+## Phase C — Parallel remediation
+
+Once initial findings are available, agents can work concurrently.
+
+Rules:
+
+- Each agent owns its assigned route and components.
+- Shared files require orchestrator approval.
+- Do not overwrite another agent's changes.
+- Do not modify shared API contracts independently.
+- Communicate dependencies immediately.
+- Preserve existing working functionality.
+- Run focused tests after meaningful changes.
+
+If two agents need the same shared component, the orchestrator assigns ownership to one agent and communicates the resulting interface to the other.
+
+## Phase D — Integration checkpoints
+
+The orchestrator must review progress at meaningful milestones.
+
+Required checkpoints:
+
+1. Architecture and findings completed.
+2. All seven initial audits completed.
+3. Primary UI remediation completed.
+4. Backend integration completed.
+5. Focused tests completed.
+6. Cross-tab integration completed.
+7. Final system verification completed.
+
+An agent cannot declare completion without reporting its changed files, tests, and verification evidence.
+
+---
+
+# 7. CROSS-TAB INTEGRATION REQUIREMENTS
+
+The application must work as one connected workflow.
+
+The orchestrator must explicitly validate these transitions:
+
+### Workflow 1: Discovery → Studio
+
+- Select a video.
+- Analyze it.
+- Transfer the correct video ID and metadata.
+- Open it in Studio.
+
+### Workflow 2: Discovery → Editor
+
+- Select a candidate.
+- Open it in the editor.
+- Preserve the correct source video.
+- Transfer start and end timestamps.
+
+### Workflow 3: Studio → Editor
+
+- Transfer selected clip information.
+- Preserve caption and composition settings where supported.
+
+### Workflow 4: Editor → Pipeline
+
+- Export a clip.
+- Register the actual processing task.
+- Show the task in the pipeline.
+- Display real-time progress.
+
+### Workflow 5: Pipeline → Projects
+
+- Complete processing.
+- Persist the project.
+- Make the resulting clip available in Projects Archive.
+
+### Workflow 6: Projects → Publishing
+
+- Select a completed clip.
+- Transfer its actual media reference.
+- Populate platform metadata.
+- Allow publishing or scheduling.
+
+### Workflow 7: Settings → Entire Application
+
+- Verify settings are persisted.
+- Ensure API configuration is consumed by relevant services.
+- Verify telemetry reflects actual backend state.
+
+All transitions must preserve identifiers, state, and data integrity.
+
+Do not rely on fragile URL hacks or duplicated global state.
+
+---
+
+# 8. TESTING AND VERIFICATION REQUIREMENTS
+
+Each specialist must execute focused tests for its section.
+
+The orchestrator must execute system-wide verification after all agents finish.
+
+## Frontend
+
+Run:
+
+- TypeScript validation.
+- ESLint where configured.
+- Production build.
+- Relevant component tests.
+- Browser-based interaction tests.
+
+Required build gate:
+
+`npm run build`
+
+The build must complete successfully.
+
+## Backend
+
+Run:
+
+`pytest tests/`
+
+Also run targeted tests for:
+
+- Rendering.
+- Caption generation.
+- Transcript word snapping.
+- Project persistence.
+- API authentication.
+- Publishing workflows.
+- Processing task lifecycle.
+- Settings persistence.
+
+Adapt commands to the actual repository structure.
+
+## Runtime verification
+
+Verify:
+
+- FastAPI responds on port 8000.
+- Next.js responds on port 3050.
+- Required endpoints return expected responses.
+- Browser console contains no uncaught exceptions.
+- No unhandled promise rejections.
+- No unexplained missing asset errors.
+- No broken navigation.
+- No infinite loading states.
+- No unintended parent-page scrolling.
+
+## Browser interaction testing
+
+Use browser automation if available.
+
+Do not rely exclusively on static code inspection.
+
+Actually interact with:
+
+- Buttons.
+- Dropdowns.
+- Modals.
+- Tabs.
+- Sliders.
+- Video playback.
+- Timeline.
+- Transcript.
+- File downloads.
+- Forms.
+- Scheduling controls.
+- Task cancellation.
+
+Test important workflows with real backend services and controlled test data.
+
+Never publish publicly, delete valuable user data, or trigger expensive external operations without an explicitly safe test environment or authorization.
+
+---
+
+# 9. FAILURE MANAGEMENT
+
+When an agent encounters a blocker:
+
+1. Record it in `AUDIT_PROGRESS.md`.
+2. Identify the actual root cause.
+3. Determine whether another agent owns the dependency.
+4. Notify the orchestrator.
+5. Agree on a resolution.
+6. Implement the fix.
+7. Re-run affected tests.
+
+Do not silently skip failing tests.
+
+Do not hide errors with broad exception handlers.
+
+Do not disable linting or type checks to obtain a successful build.
+
+Do not weaken existing security checks to make an integration work.
+
+If a third-party API is unavailable due to credentials, quotas, permissions, or service outages, distinguish that from an application defect.
+
+---
+
+# 10. FINAL PRODUCTION READINESS GATE
+
+The orchestrator must not close the operation until all seven agents have submitted their reports and the final integration review has been performed.
+
+### Mandatory completion criteria
+
+- [ ] Viral Discovery audited and verified.
+- [ ] Studio Workspace audited and verified.
+- [ ] Video Editor audited and verified.
+- [ ] Projects Archive audited and verified.
+- [ ] OmniPost Publishing audited and verified.
+- [ ] Processing Pipeline audited and verified.
+- [ ] Settings & Telemetry audited and verified.
+- [ ] Cross-tab navigation verified.
+- [ ] Shared design system consistency verified.
+- [ ] No production mock data.
+- [ ] Backend contracts verified.
+- [ ] Frontend production build passes.
+- [ ] Backend critical tests pass.
+- [ ] Browser interaction tests pass.
+- [ ] No critical runtime errors.
+- [ ] No unresolved critical security issues.
+- [ ] No regressions from parallel changes.
+
+Do not report 100% completion if any mandatory criterion remains unresolved.
+
+Use explicit statuses:
+
+- PASS
+- FAIL
+- BLOCKED
+- NOT VERIFIED
+
+---
+
+# 11. FINAL REPORT
+
+Generate:
+
+`FINAL_PRODUCTION_READINESS_REPORT.md`
+
+Include:
+
+## A. Executive Summary
+Overall application condition and final readiness assessment.
+
+## B. Seven-Agent Completion Matrix
+Each agent's findings, fixes, and verification results.
+
+## C. UI/UX Improvements
+Actual changes to visual design, layout, responsiveness, accessibility, and interactions.
+
+## D. Backend Integration
+Verified endpoints, corrected API contracts, and remaining integration limitations.
+
+## E. Engineering Changes
+Files modified, components introduced, architecture improvements, and important refactors.
+
+## F. Testing Evidence
+Build output, test counts, failures, browser verification, and runtime health.
+
+## G. Remaining Issues
+Anything unresolved, including blocked third-party integrations.
+
+## H. Final Assessment
+Choose one:
+
+- PRODUCTION READY
+- CONDITIONALLY READY
+- NOT READY
+
+Explain the evidence supporting the assessment.
+
+---
+
+# 12. EXECUTION INSTRUCTION
+
+Start immediately.
+
+**Step 1:** The Principal Orchestrator performs repository reconnaissance.
+
+**Step 2:** Spawn seven independent specialist agents, one per sidebar section.
+
+**Step 3:** Assign explicit ownership and provide each agent with this directive and its dedicated section requirements.
+
+**Step 4:** Start parallel audits.
+
+**Step 5:** Collect findings and establish dependencies.
+
+**Step 6:** Begin parallel remediation under orchestrator supervision.
+
+**Step 7:** Continuously monitor progress, resolve blockers, and verify completed work.
+
+**Step 8:** Integrate all seven sections and run cross-tab workflows.
+
+**Step 9:** Execute the final build, backend, browser, and regression gates.
+
+**Step 10:** Produce the final production readiness report.
+
+## FINAL DIRECTIVE
+
+Operate like an experienced engineering organization, not a collection of independent coding assistants.
+
+Every agent must take ownership of its assigned section.
+
+The orchestrator must maintain complete awareness of the entire project.
+
+Prioritize correctness over speed, evidence over assumptions, maintainability over shortcuts, and genuine functionality over visual simulations.
+
+Do not stop after identifying problems.
+
+**AUDIT → UNDERSTAND → FIX → TEST → VERIFY → INTEGRATE → CERTIFY.**
+
+The final deliverable is not a report describing what should work.
+
+It is the actual, improved, integrated, tested application.

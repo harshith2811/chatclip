@@ -13,10 +13,13 @@ import time
 import dataclasses
 import threading
 import gc
+import logging
 from ..contracts.models import Transcript, TranscriptSegment, WordTimestamp
 from ..contracts.interfaces import Transcriber
 from ..utils.timeline import sanitize_transcript
 from ..utils.file_ops import atomic_replace, safe_remove
+
+logger = logging.getLogger(__name__)
 
 _WHISPER_MODEL_CACHE: Dict[Tuple[str, str, str, str], Any] = {}
 _WHISPER_CACHE_LOCK = threading.Lock()
@@ -67,6 +70,66 @@ except Exception:
 class TranscriptionError(RuntimeError):
     """Raised when transcription fails across all cascade providers."""
     pass
+
+
+def merge_continuation_words(raw_words: List[Any]) -> List[WordTimestamp]:
+    """
+    Merges subword tokens, contractions, and continuation fragments produced by Whisper.
+    In Whisper BPE tokenization, a leading space indicates a word boundary.
+    Tokens lacking a leading space (or punctuation tokens like apostrophes)
+    are merged into the preceding word timestamp to prevent fragmented,
+    mid-syllable subtitle flashes and inaccurate word counts.
+    """
+    if not raw_words:
+        return []
+
+    result: List[WordTimestamp] = []
+    for w in raw_words:
+        if isinstance(w, dict):
+            w_text = w.get("word", "")
+            w_start = float(w.get("start", 0.0))
+            w_end = float(w.get("end", 0.0))
+            w_prob = float(w.get("probability", w.get("confidence", 0.9)))
+            w_speaker = w.get("speaker_tag", None)
+        else:
+            w_text = getattr(w, "word", "")
+            w_start = float(getattr(w, "start", 0.0))
+            w_end = float(getattr(w, "end", 0.0))
+            w_prob = float(getattr(w, "probability", getattr(w, "confidence", 0.9)))
+            w_speaker = getattr(w, "speaker_tag", None)
+
+        clean_text = w_text.strip()
+        if not clean_text:
+            continue
+
+        has_leading_space = w_text.startswith(" ") or w_text.startswith("\t")
+        is_subword_or_punct = not has_leading_space or clean_text in {
+            ",", ".", "!", "?", ";", ":", "'s", "'t", "'re", "'ve", "'d", "'m", "n't"
+        }
+
+        if result and is_subword_or_punct:
+            prev = result[-1]
+            new_word = f"{prev.word}{clean_text}"
+            new_end = round(max(prev.end, w_end), 3)
+            new_conf = round(min(prev.confidence, w_prob), 2)
+            result[-1] = WordTimestamp(
+                word=new_word,
+                start=prev.start,
+                end=new_end,
+                confidence=new_conf,
+                speaker_tag=prev.speaker_tag,
+            )
+        else:
+            result.append(
+                WordTimestamp(
+                    word=clean_text,
+                    start=round(w_start, 3),
+                    end=round(w_end, 3),
+                    confidence=round(min(max(w_prob, 0.0), 1.0), 2),
+                    speaker_tag=w_speaker,
+                )
+            )
+    return result
 
 
 class DiarizationAnnotator:
@@ -160,6 +223,133 @@ class LocalTranscriber(Transcriber):
             if os.path.exists(temp_path):
                 safe_remove(temp_path)
 
+    def fetch_online_transcript(self, video_id: str) -> Optional[Transcript]:
+        """
+        Fast-path: Extracts authentic time-aligned subtitles directly from YouTube
+        using yt-dlp json3 player responses without requiring full video download.
+        Returns a word-level synchronized Transcript in seconds.
+        """
+        cached = self.load_from_cache(video_id)
+        if cached:
+            return cached
+        if video_id in self._mock_transcripts:
+            return self._mock_transcripts[video_id]
+
+        import yt_dlp
+        import urllib.request
+
+        ydl_opts = {
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+        }
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    return None
+
+                subs = info.get("subtitles", {}) or {}
+                auto_subs = info.get("automatic_captions", {}) or {}
+
+                # Look for English or original language tracks
+                track_entries = None
+                for lang_key in ["en", "en-orig", "en-US", "en-GB"]:
+                    if lang_key in subs:
+                        track_entries = subs[lang_key]
+                        break
+                    if lang_key in auto_subs:
+                        track_entries = auto_subs[lang_key]
+                        break
+
+                if not track_entries and subs:
+                    track_entries = next(iter(subs.values()))
+                if not track_entries and auto_subs:
+                    track_entries = next(iter(auto_subs.values()))
+
+                if not track_entries:
+                    return None
+
+                json3_entry = next((e for e in track_entries if e.get("ext") == "json3"), None)
+                if not json3_entry or not json3_entry.get("url"):
+                    return None
+
+                req = urllib.request.Request(json3_entry["url"], headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+
+                events = data.get("events", [])
+                segments: List[TranscriptSegment] = []
+                seg_idx = 0
+
+                for ev in events:
+                    t_start_ms = ev.get("tStartMs")
+                    d_dur_ms = ev.get("dDurationMs", 0)
+                    segs = ev.get("segs", [])
+                    if t_start_ms is None or not segs:
+                        continue
+
+                    seg_text = "".join(s.get("utf8", "") for s in segs).strip()
+                    if not seg_text or seg_text == "\n":
+                        continue
+
+                    seg_start = round(t_start_ms / 1000.0, 3)
+                    seg_end = round((t_start_ms + d_dur_ms) / 1000.0, 3)
+
+                    words: List[WordTimestamp] = []
+                    for s in segs:
+                        w_text = s.get("utf8", "")
+                        clean_w = w_text.strip()
+                        if not clean_w:
+                            continue
+                        offset_ms = s.get("tOffsetMs", 0)
+                        w_start = round((t_start_ms + offset_ms) / 1000.0, 3)
+                        w_end = min(seg_end, round(w_start + 0.45, 3))
+                        words.append(
+                            WordTimestamp(
+                                word=clean_w,
+                                start=w_start,
+                                end=max(w_start + 0.1, w_end),
+                                confidence=0.95,
+                            )
+                        )
+
+                    if not words:
+                        words = [WordTimestamp(word=seg_text, start=seg_start, end=seg_end, confidence=0.95)]
+
+                    segments.append(
+                        TranscriptSegment(
+                            segment_id=seg_idx,
+                            start=seg_start,
+                            end=max(seg_start + 0.2, seg_end),
+                            text=seg_text,
+                            speaker_tag="SPEAKER_00",
+                            words=words,
+                        )
+                    )
+                    seg_idx += 1
+
+                if not segments:
+                    return None
+
+                total_duration = float(info.get("duration") or segments[-1].end)
+                full_text = " ".join(s.text for s in segments).strip()
+                transcript = Transcript(
+                    video_id=video_id,
+                    language=info.get("language", "en"),
+                    duration_seconds=total_duration,
+                    text=full_text,
+                    segments=segments,
+                    provider="youtube-captions",
+                )
+                self.save_to_cache(transcript)
+                return transcript
+        except Exception as e:
+            logger.warning(f"fetch_online_transcript failed for {video_id}: {e}", exc_info=True)
+            return None
+
     def _try_faster_whisper(
         self, media_path: str, video_id: str, device: str, compute_type: str
     ) -> Tuple[Optional[Transcript], Optional[str]]:
@@ -179,20 +369,17 @@ class LocalTranscriber(Transcriber):
             models_whisper_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../models/whisper"))
             download_root = os.environ.get("WHISPER_DOWNLOAD_ROOT") or (models_whisper_dir if os.path.exists(models_whisper_dir) else None)
             model = _get_cached_whisper_model(self.model_size, device=device, compute_type=compute_type, download_root=download_root)
-            segments_raw, info = model.transcribe(media_path, word_timestamps=True)
+            segments_raw, info = model.transcribe(
+                media_path,
+                word_timestamps=True,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500),
+            )
 
             segments: List[TranscriptSegment] = []
             full_text_parts = []
             for idx, s in enumerate(segments_raw):
-                words = [
-                    WordTimestamp(
-                        word=w.word.strip(),
-                        start=round(w.start, 2),
-                        end=round(w.end, 2),
-                        confidence=round(getattr(w, "probability", 0.9), 2),
-                    )
-                    for w in (s.words or [])
-                ]
+                words = merge_continuation_words(s.words or [])
                 # BUG-16 fix: canonical integer segment ID
                 segments.append(
                     TranscriptSegment(

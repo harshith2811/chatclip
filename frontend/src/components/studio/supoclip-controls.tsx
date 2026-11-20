@@ -31,6 +31,10 @@ interface SupoClipControlsProps {
   videoId?: string | null;
   activeClipId?: string | null;
   onPlanGenerated?: (plan: SupoClipPlan) => void;
+  selectedLayout?: string;
+  onLayoutChange?: (layout: string) => void;
+  selectedTemplate?: string;
+  onTemplateChange?: (template: string) => void;
   className?: string;
 }
 
@@ -38,14 +42,18 @@ export function SupoClipControls({
   videoId,
   activeClipId,
   onPlanGenerated,
+  selectedLayout: controlledLayout,
+  onLayoutChange,
+  selectedTemplate: controlledTemplate,
+  onTemplateChange,
   className = '',
 }: SupoClipControlsProps) {
   const [status, setStatus] = React.useState<SupoClipStatus | null>(null);
   const [workflows, setWorkflows] = React.useState<SupoClipWorkflow[]>([]);
   const [templates, setTemplates] = React.useState<SupoClipTemplate[]>([]);
   const [selectedWorkflow, setSelectedWorkflow] = React.useState<string>('highlights');
-  const [selectedTemplate, setSelectedTemplate] = React.useState<string>('hormozi');
-  const [selectedLayout, setSelectedLayout] = React.useState<string>('active_speaker');
+  const [internalTemplate, setInternalTemplate] = React.useState<string>('hormozi');
+  const [internalLayout, setInternalLayout] = React.useState<string>('active_speaker');
   const [topicInput, setTopicInput] = React.useState<string>('');
   const [seriesParts, setSeriesParts] = React.useState<number>(3);
   const [instructions, setInstructions] = React.useState<string>('');
@@ -53,6 +61,19 @@ export function SupoClipControls({
   const [isPlanning, setIsPlanning] = React.useState<boolean>(false);
   const [isRendering, setIsRendering] = React.useState<boolean>(false);
   const [lastRenderedFile, setLastRenderedFile] = React.useState<string | null>(null);
+
+  const selectedTemplate = controlledTemplate !== undefined ? controlledTemplate : internalTemplate;
+  const selectedLayout = controlledLayout !== undefined ? controlledLayout : internalLayout;
+
+  const handleLayoutSelect = (layoutId: string) => {
+    setInternalLayout(layoutId);
+    if (onLayoutChange) onLayoutChange(layoutId);
+  };
+
+  const handleTemplateSelect = (templateId: string) => {
+    setInternalTemplate(templateId);
+    if (onTemplateChange) onTemplateChange(templateId);
+  };
 
   React.useEffect(() => {
     let mounted = true;
@@ -262,7 +283,7 @@ export function SupoClipControls({
                 <button
                   key={l.id}
                   type="button"
-                  onClick={() => setSelectedLayout(l.id)}
+                  onClick={() => handleLayoutSelect(l.id)}
                   className={`p-2.5 rounded-xl border text-left transition-all ${
                     isSelected
                       ? 'border-primary bg-primary/10 ring-1 ring-primary/40'
@@ -305,7 +326,7 @@ export function SupoClipControls({
                 <button
                   key={t.id}
                   type="button"
-                  onClick={() => setSelectedTemplate(t.id)}
+                  onClick={() => handleTemplateSelect(t.id)}
                   className={`p-2.5 rounded-xl border text-left transition-all ${
                     isSelected
                       ? 'border-primary bg-primary/10 ring-1 ring-primary/40'

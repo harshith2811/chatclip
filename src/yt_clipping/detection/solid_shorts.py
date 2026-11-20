@@ -102,9 +102,11 @@ class SolidShortsDecider:
         heatmap_data: Optional[HeatmapData] = None,
         target_count: Optional[int] = None,
         strict_quality: bool = True,
+        trend_alignments: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> SolidShortsDecision:
         """
         Executes the 5-signal solid shorts decision algorithm.
+        Incorporates audience retention peaks, temporal pacing, and real-time Google/YouTube trend velocity.
         """
         if not candidates:
             return SolidShortsDecision(
@@ -125,7 +127,7 @@ class SolidShortsDecider:
             f"Source duration: {duration_seconds:.1f}s -> Capacity ceiling: {capacity} clips (Min spacing: {min_spacing:.0f}s)."
         ]
 
-        # 1. Rank candidates by effective score (incorporating audience retention boost)
+        # 1. Rank candidates by effective score (incorporating audience retention boost + trend velocity)
         scored_pool: List[Tuple[float, HighlightCandidate, str]] = []
         for c in candidates:
             effective_score = float(c.score)
@@ -159,6 +161,14 @@ class SolidShortsDecider:
                 # mark it as base score
                 if not matched_peak:
                     retention_reason = "Base score (no retention peak alignment)"
+
+            # Check real-time Google & YouTube trend velocity alignment
+            if trend_alignments and c.candidate_id in trend_alignments:
+                t_info = trend_alignments[c.candidate_id]
+                t_boost = t_info.get("trend_score_boost", 0.0)
+                if t_boost > 0:
+                    effective_score += t_boost
+                    retention_reason += f" | {t_info.get('rationale', '')} (+{t_boost:.1f} trend boost)"
 
             scored_pool.append((effective_score, c, retention_reason))
 

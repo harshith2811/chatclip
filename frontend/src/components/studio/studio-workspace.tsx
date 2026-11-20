@@ -13,7 +13,12 @@ import { SupoClipControls } from './supoclip-controls';
 import { useDiscoveryStore } from '@/lib/store/discovery-store';
 import { usePlaybackStore } from '@/lib/store/playback-store';
 import { useUiStore } from '@/lib/store/ui-store';
-import { useRenderedClips, useVideoPreview } from '@/lib/hooks/use-discovery';
+import {
+  useRenderedClips,
+  useVideoPreview,
+  useSourceTranscript,
+  useRenderCandidateMutation,
+} from '@/lib/hooks/use-discovery';
 import {
   Video,
   Film,
@@ -39,6 +44,8 @@ interface ClipData {
   posterUrl?: string;
   startTime: number;
   endTime: number;
+  sourceStartTime?: number;
+  sourceEndTime?: number;
   virality: ViralityMetrics;
   captionPackage?: any;
   channelName?: string;
@@ -83,6 +90,13 @@ export function StudioWorkspace() {
     activeVideoId ? { video_id_or_url: activeVideoId, min_duration: 15, max_duration: 60 } : null
   );
 
+  // Fetch word-level transcript for real-time synchronized subtitles in PhonePlayer
+  const { data: transcript } = useSourceTranscript(activeVideoId);
+  const renderMutation = useRenderCandidateMutation();
+  const [isRenderingActiveClip, setIsRenderingActiveClip] = React.useState(false);
+  const [studioLayout, setStudioLayout] = React.useState<'active_speaker' | 'blur_background' | 'split_screen'>('active_speaker');
+  const [studioSubtitleStyle, setStudioSubtitleStyle] = React.useState<string>('hormozi');
+
   // Dynamically resolve clips: Real rendered MP4s take precedence, then detected preview candidates.
   // Never fallback to mock or dummy data.
   const resolvedClips = React.useMemo<ClipData[]>(() => {
@@ -94,6 +108,8 @@ export function StudioWorkspace() {
           ? Math.round(clip.score)
           : (intel.composite_score != null ? Math.round(intel.composite_score) : null);
         const clipDur = clip.duration != null ? Math.round(clip.duration) : 0;
+        const sourceStart = clip.start_seconds ?? clip.candidate_data?.start_seconds ?? 0;
+        const sourceEnd = clip.end_seconds ?? clip.candidate_data?.end_seconds ?? (sourceStart + clipDur);
 
         return {
           id: clip.clip_id || `rendered-${idx}`,
@@ -107,6 +123,8 @@ export function StudioWorkspace() {
           posterUrl: clip.poster_url || undefined,
           startTime: 0,
           endTime: clipDur,
+          sourceStartTime: sourceStart,
+          sourceEndTime: sourceEnd,
           virality: {
             compositeScore,
             hookStrength: intel.hook_strength != null ? Math.round(intel.hook_strength * 10) : null,
@@ -147,10 +165,12 @@ export function StudioWorkspace() {
           title: cand.hook_title || cand.title || `Viral Cut #${idx + 1}`,
           duration: dur,
           score: compositeScore,
-          videoUrl: undefined,
-          posterUrl: undefined,
+          videoUrl: `/assets/${activeVideoId}.mp4`,
+          posterUrl: previewData?.metadata?.thumbnail_url || previewData?.source_metadata?.thumbnail_url || undefined,
           startTime: start,
           endTime: end,
+          sourceStartTime: start,
+          sourceEndTime: end,
           virality: {
             compositeScore,
             hookStrength: cand.hook_score != null
@@ -182,7 +202,7 @@ export function StudioWorkspace() {
 
     // 3. Honest empty list if no clips exist
     return [];
-  }, [renderedClips, previewData]);
+  }, [renderedClips, previewData, activeVideoId]);
 
   const [selectedClipId, setSelectedClipId] = React.useState<string>('');
 
@@ -346,16 +366,64 @@ export function StudioWorkspace() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {activeClip.videoUrl ? (
-              <Badge variant="success" className="text-xs flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                1080x1920 MP4 Ready
-              </Badge>
+            {activeClip && activeClip.videoUrl && !activeClip.videoUrl.includes('/assets/') ? (
+              <div className="flex items-center gap-2">
+                <Badge variant="success" className="text-xs flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  1080x1920 MP4 Ready
+                </Badge>
+                <a
+                  href={activeClip.videoUrl}
+                  download={`${activeClip.title || 'short'}.mp4`}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-muted hover:bg-muted/80 text-foreground border border-border transition-colors cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download
+                </a>
+              </div>
             ) : (
-              <Badge variant="secondary" className="text-xs flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Candidate Cut Preview
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="text-xs flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  Preview (Live Subtitles)
+                </Badge>
+                <Button
+                  size="sm"
+                  disabled={isRenderingActiveClip || renderMutation.isPending}
+                  onClick={async () => {
+                    if (!activeClip) return;
+                    setIsRenderingActiveClip(true);
+                    try {
+                      await renderMutation.mutateAsync({
+                        candidateId: activeClip.id,
+                        videoId: activeVideoId,
+                        startTime: activeClip.startTime,
+                        endTime: activeClip.endTime,
+                        layout: 'active_speaker',
+                        subtitlePreset: 'hormozi',
+                      } as any);
+                      refetchClips();
+                    } catch (e) {
+                      console.error('Render clip error:', e);
+                    } finally {
+                      setIsRenderingActiveClip(false);
+                    }
+                  }}
+                  className="h-7 text-xs gap-1.5 font-bold bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs cursor-pointer"
+                >
+                  {isRenderingActiveClip ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      Rendering Short...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      Render Burned Short
+                    </>
+                  )}
+                </Button>
+              </div>
             )}
           </div>
         </div>
@@ -365,6 +433,10 @@ export function StudioWorkspace() {
       <SupoClipControls
         videoId={activeVideoId}
         activeClipId={activeClip.id}
+        selectedLayout={studioLayout}
+        onLayoutChange={(l) => setStudioLayout(l as any)}
+        selectedTemplate={studioSubtitleStyle}
+        onTemplateChange={setStudioSubtitleStyle}
       />
 
       {/* Studio Split Layout */}
@@ -382,6 +454,12 @@ export function StudioWorkspace() {
               channelName={videoChannel}
               likeCount={activeClip.sourceMetadata?.likeCount}
               commentCount={activeClip.sourceMetadata?.commentCount}
+              layoutMode={studioLayout}
+              captionStyle={studioSubtitleStyle}
+              onLayoutChange={(l) => setStudioLayout(l as any)}
+              onCaptionStyleChange={setStudioSubtitleStyle}
+              transcript={transcript}
+              isRendered={Boolean(activeClip.videoUrl && !activeClip.videoUrl.includes('/assets/'))}
             />
           </Card>
         </div>
@@ -399,7 +477,7 @@ export function StudioWorkspace() {
                   {videoTitle} <span className="text-muted-foreground font-normal">({activeClip.title})</span>
                 </h3>
                 <p className="text-xs text-muted-foreground mt-0.5 font-mono tnum">
-                  Creator: {videoChannel || '--'} • Duration: {activeClip.duration}s • Window: {activeClip.startTime.toFixed(1)}s – {activeClip.endTime.toFixed(1)}s
+                  Creator: {videoChannel || '--'} • Duration: {activeClip.duration}s • Window: {(activeClip.sourceStartTime ?? activeClip.startTime).toFixed(1)}s – {(activeClip.sourceEndTime ?? activeClip.endTime).toFixed(1)}s
                 </p>
               </div>
               <Badge variant="success" className="text-xs px-2.5 py-1 font-mono tnum shrink-0">

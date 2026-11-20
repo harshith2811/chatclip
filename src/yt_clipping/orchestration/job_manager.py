@@ -104,6 +104,16 @@ class JobManager:
                     )
                     conn.execute("CREATE INDEX IF NOT EXISTS idx_render_jobs_status ON render_jobs(status);")
                     conn.execute("CREATE INDEX IF NOT EXISTS idx_render_jobs_video ON render_jobs(video_id);")
+                    # Clean up orphaned jobs left incomplete from prior process terminations
+                    conn.execute(
+                        """
+                        UPDATE render_jobs
+                        SET status = 'failed',
+                            message = 'Render interrupted by server restart',
+                            error = 'Process restart'
+                        WHERE status IN ('rendering', 'queued')
+                        """
+                    )
             finally:
                 conn.close()
 

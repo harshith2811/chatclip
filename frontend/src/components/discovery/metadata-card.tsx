@@ -16,6 +16,12 @@ export interface MetadataCardProps {
   onOpenStudio?: () => void;
   isRendering?: boolean;
   candidatesCount?: number;
+  videoVelocity?: {
+    views_per_hour?: number;
+    velocity_tier?: string;
+    velocity_score?: number;
+    engagement_ratio?: number;
+  } | null;
 }
 
 export function MetadataCard({
@@ -25,6 +31,7 @@ export function MetadataCard({
   onOpenStudio,
   isRendering = false,
   candidatesCount = 0,
+  videoVelocity,
 }: MetadataCardProps) {
   const viewsFormatted =
     metadata.view_count == null
@@ -93,6 +100,18 @@ export function MetadataCard({
                 >
                   <ShieldCheck className="w-3 h-3" />
                   <span className="capitalize">{metadata.compliance_bucket}</span>
+                </Badge>
+              )}
+              {videoVelocity?.velocity_tier && (
+                <Badge
+                  variant={videoVelocity.velocity_tier === 'VIRAL_BREAKOUT' ? 'destructive' : 'warning'}
+                  className="text-xs font-bold gap-1 shadow-xs"
+                >
+                  <Sparkles className="w-3 h-3 fill-current" />
+                  <span>
+                    {videoVelocity.velocity_tier === 'VIRAL_BREAKOUT' ? '🔥 Viral Outlier' : '⚡ High Velocity'}
+                    {videoVelocity.views_per_hour ? ` (${Math.round(videoVelocity.views_per_hour).toLocaleString()} v/hr)` : ''}
+                  </span>
                 </Badge>
               )}
             </div>
