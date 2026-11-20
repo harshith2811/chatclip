@@ -123,7 +123,7 @@ export function CommandSearchDialog() {
       {
         id: 'nav-publishing',
         category: 'Navigation',
-        label: 'OmniPost Publishing',
+        label: 'Multi-Platform Publishing',
         description: 'Multi-platform social distribution and receipts',
         icon: Share2,
         action: () => setActiveTab('publishing'),

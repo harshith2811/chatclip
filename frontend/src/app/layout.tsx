@@ -4,7 +4,7 @@ import { QueryProvider } from '@/components/providers/query-provider';
 import { ThemeProvider } from '@/components/providers/theme-provider';
 
 export const metadata: Metadata = {
-  title: 'YouTube Clipping Intelligence & OmniPost Studio',
+  title: 'YouTube Clipping Intelligence Studio',
   description:
     'Modern production-grade multi-user clipping intelligence and multi-platform publishing platform.',
   icons: {

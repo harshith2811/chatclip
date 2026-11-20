@@ -26,7 +26,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'studio', label: 'Studio Workspace', icon: Video },
   { id: 'editor', label: 'Video Editor', icon: Film },
   { id: 'projects', label: 'Projects Archive', icon: FolderKanban },
-  { id: 'publishing', label: 'OmniPost Publishing', icon: Share2 },
+  { id: 'publishing', label: 'Multi-Platform Publishing', icon: Share2 },
   { id: 'pipeline', label: 'Processing Pipeline', icon: Cpu },
   { id: 'settings', label: 'Settings & Telemetry', icon: Settings },
 ];

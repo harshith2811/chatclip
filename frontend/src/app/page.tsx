@@ -61,7 +61,7 @@ const ProjectsView = dynamic(
 );
 const PublishingView = dynamic(
   () => import('@/components/publishing/publishing-view').then((m) => m.PublishingView),
-  { loading: () => <WorkspaceSkeleton title="OmniPost Publishing" /> }
+  { loading: () => <WorkspaceSkeleton title="Multi-Platform Publishing" /> }
 );
 const PipelineView = dynamic(
   () => import('@/components/pipeline/pipeline-view').then((m) => m.PipelineView),
@@ -592,7 +592,7 @@ export default function DashboardPage() {
         {activeTab === 'projects' && <ProjectsView />}
 
         {/* =========================================================================
-            SURFACE: OMNIPOST MULTI-PLATFORM PUBLISHER
+            SURFACE: MULTI-PLATFORM SOCIAL PUBLISHER
            ========================================================================= */}
         {activeTab === 'publishing' && <PublishingView />}
 

@@ -143,7 +143,7 @@ export function PublishingView() {
             Multi-Platform Social Distribution
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-            Publishing gateway connected to Dedicated YouTube Data API v3 and OmniPost multi-channel hub.
+            Publishing gateway connected to Dedicated YouTube Data API v3 and multi-platform social distribution.
           </p>
         </div>
 
@@ -216,7 +216,7 @@ export function PublishingView() {
                 <Globe className="w-4 h-4" />
               </span>
               <div>
-                <h4 className="text-xs font-bold text-foreground">OmniPost Gateway</h4>
+                <h4 className="text-xs font-bold text-foreground">Social Multi-Gateway</h4>
                 <p className="text-[11px] text-muted-foreground truncate font-mono">
                   Port :3000 Microservice
                 </p>
