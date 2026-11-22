@@ -92,9 +92,18 @@ export function TrendingModal({ onSelectVideo }: TrendingModalProps) {
         {/* Video Card Grid */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5">
           {isLoading ? (
-            <div className="py-20 flex flex-col items-center justify-center text-center space-y-3">
-              <RefreshCw className="w-8 h-8 text-primary animate-spin" />
-              <p className="text-sm text-muted-foreground">Fetching live Top 10M viral feed...</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4 animate-pulse">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-2.5">
+                  <div className="aspect-video w-full rounded-md bg-muted/50" />
+                  <div className="space-y-1.5">
+                    <div className="h-3 w-24 bg-muted/60 rounded" />
+                    <div className="h-4 w-full bg-muted/50 rounded" />
+                    <div className="h-3 w-3/4 bg-muted/40 rounded" />
+                  </div>
+                  <div className="h-7 w-full bg-muted/30 rounded mt-2" />
+                </div>
+              ))}
             </div>
           ) : isError ? (
             <div className="py-16 flex flex-col items-center justify-center text-center space-y-3">

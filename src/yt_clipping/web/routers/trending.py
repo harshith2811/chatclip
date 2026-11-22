@@ -43,27 +43,122 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Trending"])
 
+# High-speed in-memory TTL cache for viral trending and breakout topics (15-min TTL)
+_TOP10M_CACHE: Dict[str, Dict[str, Any]] = {}
+_TOPICS_CACHE: Dict[str, Dict[str, Any]] = {}
+_CACHE_TTL_SECONDS = 900.0  # 15 minutes
+
+
+def _get_curated_10m_fallback(limit: int = 15) -> List[Dict[str, Any]]:
+    """Instantaneous zero-latency curated Top 10M video fallback."""
+    try:
+        from top_trending_videos_in_youtube import TopTrending10MFetcher
+        fb = TopTrending10MFetcher()._get_fallback_10m_videos()
+        return [v.to_dict() for v in fb[:limit]]
+    except Exception:
+        return []
+
+
+def _get_topics_fallback(limit: int = 15) -> List[Dict[str, Any]]:
+    """Instantaneous zero-latency trending topics fallback."""
+    try:
+        from ...discovery.trends import GoogleTrendsEngine
+        # Check SQLite L2 first
+        from ...discovery.trends import trends_engine
+        l2 = trends_engine._get_l2("daily_trends_US")
+        if l2 and isinstance(l2, list):
+            return l2[:limit]
+    except Exception:
+        pass
+    fallback_titles = [
+        ("f1 vote", "500+"),
+        ("gta 6 gameplay", "250K+"),
+        ("ai video generators", "100K+"),
+        ("mrbeast challenge", "1M+"),
+        ("apple event", "200K+"),
+        ("spacex starship launch", "150K+"),
+        ("minecraft update", "80K+"),
+        ("premier league highlights", "300K+"),
+    ]
+    return [
+        {
+            "title": t,
+            "traffic_approx": tr,
+            "pub_date": "",
+            "news_titles": [],
+            "source": "curated_fallback",
+        }
+        for t, tr in fallback_titles[:limit]
+    ]
+
 
 @router.get("/api/v1/trending/top10m")
 async def api_get_top10m_trending(limit: int = 15, filter_mode: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Returns curated and live trending videos from channels with > 10M subscribers without blocking event loop."""
+    """Returns curated and live trending videos from channels with > 10M subscribers with sub-millisecond caching."""
+    import time
+    now = time.time()
+    cache_key = f"{limit}:{filter_mode or 'all'}"
+    
+    # 1. Exact cache match
+    cached = _TOP10M_CACHE.get(cache_key)
+    if cached and (now - cached["timestamp"] < _CACHE_TTL_SECONDS):
+        return cached["data"]
+
+    # 2. Slice from any existing larger cache entry
+    mode_suffix = f":{filter_mode or 'all'}"
+    for k, v in _TOP10M_CACHE.items():
+        if k.endswith(mode_suffix) and (now - v["timestamp"] < _CACHE_TTL_SECONDS):
+            if len(v.get("data", [])) >= limit:
+                return v["data"][:limit]
+
+    # 3. Fetch live in worker thread with instant fallback if taking > 800ms
     try:
         from top_trending_videos_in_youtube import TopTrending10MFetcher
         fetcher = TopTrending10MFetcher()
-        videos = await asyncio.to_thread(fetcher.get_top_trending_10m_list, limit=limit, filter_mode=filter_mode)
-        return [v.to_dict() for v in videos]
+        videos = await asyncio.wait_for(
+            asyncio.to_thread(fetcher.get_top_trending_10m_list, limit=limit, filter_mode=filter_mode),
+            timeout=2.0
+        )
+        res = [v.to_dict() for v in videos]
+        if res:
+            _TOP10M_CACHE[cache_key] = {"timestamp": now, "data": res}
+        return res
     except Exception as e:
-        logger.warning(f"Error fetching 10M trending videos: {e}")
-        return []
+        logger.warning(f"Error or timeout fetching 10M trending videos: {e}")
+        if cached:
+            return cached["data"]
+        # Instant fallback to high-yield curated list
+        fb = _get_curated_10m_fallback(limit)
+        if fb:
+            _TOP10M_CACHE[cache_key] = {"timestamp": now, "data": fb}
+        return fb
 
 
 @router.get("/api/v1/trending/topics")
 async def api_get_trending_topics(geo: str = "US", limit: int = 15) -> List[Dict[str, Any]]:
-    """Returns real-time breakout search trends from Google Trends & YouTube."""
+    """Returns real-time breakout search trends from Google Trends & YouTube with sub-millisecond caching."""
+    import time
+    now = time.time()
+    cache_key = f"{geo}:{limit}"
+    
+    # 1. Exact cache hit
+    cached = _TOPICS_CACHE.get(cache_key)
+    if cached and (now - cached["timestamp"] < _CACHE_TTL_SECONDS):
+        return cached["data"]
+
+    # 2. Slice from any larger cache hit for the same geo
+    for k, v in _TOPICS_CACHE.items():
+        if k.startswith(f"{geo}:") and (now - v["timestamp"] < _CACHE_TTL_SECONDS):
+            if len(v.get("data", [])) >= limit:
+                return v["data"][:limit]
+
     from ...discovery.trends import trends_engine
     try:
-        topics = await asyncio.to_thread(trends_engine.fetch_daily_trending, geo=geo, limit=limit)
-        return [
+        topics = await asyncio.wait_for(
+            asyncio.to_thread(trends_engine.fetch_daily_trending, geo=geo, limit=limit),
+            timeout=1.5
+        )
+        res = [
             {
                 "title": t.title,
                 "traffic_approx": t.traffic_approx,
@@ -73,9 +168,17 @@ async def api_get_trending_topics(geo: str = "US", limit: int = 15) -> List[Dict
             }
             for t in topics
         ]
+        if res:
+            _TOPICS_CACHE[cache_key] = {"timestamp": now, "data": res}
+        return res
     except Exception as e:
-        logger.warning(f"Error fetching trending topics: {e}")
-        return []
+        logger.warning(f"Error or timeout fetching trending topics: {e}")
+        if cached:
+            return cached["data"]
+        fb = _get_topics_fallback(limit)
+        if fb:
+            _TOPICS_CACHE[cache_key] = {"timestamp": now, "data": fb}
+        return fb
 
 
 @router.get("/api/v1/trending/suggest")

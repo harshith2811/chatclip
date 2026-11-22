@@ -9,6 +9,32 @@ import { Eye, ThumbsUp, MessageSquare, Clock, ExternalLink, ShieldCheck, Sparkle
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+// Complete YouTube Data API v3 category mapping
+export const YOUTUBE_CATEGORY_MAP: Record<string, string> = {
+  '1': 'Film & Animation',
+  '2': 'Autos & Vehicles',
+  '10': 'Music',
+  '15': 'Pets & Animals',
+  '17': 'Sports',
+  '18': 'Short Movies',
+  '19': 'Travel & Events',
+  '20': 'Gaming',
+  '21': 'Videoblogging',
+  '22': 'People & Blogs',
+  '23': 'Comedy',
+  '24': 'Entertainment',
+  '25': 'News & Politics',
+  '26': 'Howto & Style',
+  '27': 'Education',
+  '28': 'Science & Tech',
+  '29': 'Nonprofits & Activism',
+  '30': 'Movies',
+  '31': 'Anime/Animation',
+  '32': 'Action/Adventure',
+  '43': 'Shows',
+  '44': 'Trailers',
+};
+
 export interface MetadataCardProps {
   metadata: EnrichedVideoInfo;
   className?: string;
@@ -88,9 +114,9 @@ export function MetadataCard({
               <Badge variant="outline" className="text-xs font-mono">
                 ID: {metadata.video_id}
               </Badge>
-              {metadata.category && (
-                <Badge variant="secondary" className="text-xs">
-                  {metadata.category}
+              {(metadata.category || (metadata as any).category_id) && (
+                <Badge variant="secondary" className="text-xs font-semibold px-2 py-0.5">
+                  {YOUTUBE_CATEGORY_MAP[String(metadata.category || (metadata as any).category_id)] || metadata.category || (metadata as any).category_id}
                 </Badge>
               )}
               {metadata.compliance_bucket && (

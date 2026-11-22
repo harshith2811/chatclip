@@ -125,7 +125,7 @@ export const MasterCanvas: React.FC<MasterCanvasProps> = ({
             onMouseDown={handleCropStageMouseDown}
             onMouseMove={handleCropStageMouseMove}
             onMouseUp={handleCropStageMouseUp}
-            className="relative w-full h-[180px] sm:h-[195px] rounded-lg overflow-hidden bg-black flex items-center justify-center select-none cursor-crosshair group shadow-inner"
+            className="relative w-full h-[160px] sm:h-[175px] rounded-lg overflow-hidden bg-black flex items-center justify-center select-none cursor-crosshair group shadow-inner"
           >
             {resolvedSourceUrl ? (
               <video
@@ -362,8 +362,8 @@ export const MasterCanvas: React.FC<MasterCanvasProps> = ({
       </Card>
 
       {/* Acoustic Audio Waveform & Cut Bounds Card */}
-      <Card className="bg-card text-card-foreground border-border/80 shadow-xs flex-1 min-h-0 flex flex-col justify-between overflow-hidden p-2">
-        <div className="flex items-center justify-between pb-1">
+      <Card className="bg-card text-card-foreground border-border/80 shadow-xs shrink-0 flex flex-col gap-1.5 p-2.5 pb-2.5 min-h-[125px]">
+        <div className="flex items-center justify-between pb-0.5">
           <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
             <Scissors className="w-3 h-3 text-primary" />
             Acoustic Waveform & Cut Bounds
@@ -443,13 +443,13 @@ export const MasterCanvas: React.FC<MasterCanvasProps> = ({
         </div>
 
         {/* Precise Controls & Actions Footer */}
-        <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-1">
+        <div className="flex items-center justify-between pt-1.5 pb-0.5">
+          <div className="flex items-center gap-1.5">
             <Button
               variant="outline"
               size="sm"
               onClick={() => handleSetWindowFromCurrent(30)}
-              className="h-5 text-[9px] font-mono px-1.5"
+              className="h-6 text-[10px] font-mono px-2 font-medium cursor-pointer"
             >
               +30s Window
             </Button>
@@ -457,15 +457,16 @@ export const MasterCanvas: React.FC<MasterCanvasProps> = ({
               variant="ghost"
               size="sm"
               onClick={handleResetToFullVideo}
-              className="h-5 text-[9px] font-mono px-1.5"
+              className="h-6 text-[10px] font-mono px-2 font-medium cursor-pointer"
             >
               Full Video
             </Button>
           </div>
 
-          <div className="flex items-center gap-2 text-[11px] font-mono tnum">
-            <span className="text-muted-foreground">
-              Cut Length: <strong className="text-primary font-bold">{trimDuration.toFixed(1)}s</strong>
+          <div className="flex items-center gap-1.5 text-xs font-mono tnum">
+            <span className="text-muted-foreground text-[11px]">Cut Length:</span>
+            <span className="text-primary font-bold bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
+              {trimDuration.toFixed(1)}s
             </span>
           </div>
         </div>

@@ -63,8 +63,8 @@ export const TranscriptStudio: React.FC<TranscriptStudioProps> = ({
             <span className="text-xs font-bold text-foreground uppercase tracking-wider">
               Spoken Transcript
             </span>
-            <Badge variant="secondary" className="font-mono text-[9px] px-1.5 py-0">
-              {filteredSegments.length}
+            <Badge variant="secondary" className="font-mono text-[9px] px-1.5 py-0 font-semibold">
+              {filteredSegments.length.toLocaleString()}
             </Badge>
           </div>
           <Button

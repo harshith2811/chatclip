@@ -24,7 +24,9 @@ export function useTop10mTrending(limit = 15, filterMode?: string) {
   return useQuery({
     queryKey: ['trending-top10m', limit, filterMode],
     queryFn: () => discoveryApi.getTop10mTrending(limit, filterMode),
-    staleTime: 1000 * 60 * 15, // 15 minutes
+    staleTime: 1000 * 60 * 30, // 30 minutes
+    gcTime: 1000 * 60 * 60, // 1 hour durable client cache
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -32,7 +34,9 @@ export function useTrendingTopics(geo = 'US', limit = 15) {
   return useQuery({
     queryKey: ['trending-topics', geo, limit],
     queryFn: () => discoveryApi.getTrendingTopics(geo, limit),
-    staleTime: 1000 * 60 * 15,
+    staleTime: 1000 * 60 * 30,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
   });
 }
 

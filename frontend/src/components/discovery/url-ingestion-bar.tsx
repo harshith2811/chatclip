@@ -153,12 +153,31 @@ export function UrlIngestionBar({ onAnalyze, isLoading = false }: UrlIngestionBa
         </div>
       </form>
 
-      {/* Validation hint if invalid */}
+      {/* Helpful Guidance & YouTube Search Action if Non-URL Search Text */}
       {localInput && !parsed.isValid && (
-        <p className="text-xs text-amber-500 flex items-center gap-1">
-          <AlertCircle className="w-3.5 h-3.5" />
-          Please enter a valid YouTube watch URL, shorts link, embed URL, or an 11-character video ID.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-900 dark:text-amber-200">
+          <div className="flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <span>Enter a YouTube link or 11-character video ID (e.g. <code className="font-mono font-semibold">youtube.com/watch?v=...</code>).</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <a
+              href={`https://www.youtube.com/results?search_query=${encodeURIComponent(localInput)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline font-semibold flex items-center gap-1"
+            >
+              Search YouTube for &quot;{localInput}&quot; ↗
+            </a>
+            <button
+              type="button"
+              onClick={() => setIsTrendingModalOpen(true)}
+              className="text-muted-foreground hover:text-foreground font-medium cursor-pointer"
+            >
+              or Pick from Top 10M Hits
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Recent Ingestion History Chips */}

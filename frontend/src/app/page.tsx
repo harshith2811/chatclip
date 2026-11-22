@@ -132,9 +132,10 @@ export default function DashboardPage() {
       : null
   );
 
-  // Trending Videos for Empty/Hero State
-  const { data: trendingVideos } = useTop10mTrending(6);
-  // Live Google & YouTube Trends Breakout Topics
+  // Trending Videos for Empty/Hero State & Radar (Unified cache key limit=15)
+  const { data: allTrendingVideos } = useTop10mTrending(15);
+  const trendingVideos = React.useMemo(() => allTrendingVideos?.slice(0, 6) || [], [allTrendingVideos]);
+  // Live Google & YouTube Trends Breakout Topics (Cached 15min)
   const { data: trendingTopics } = useTrendingTopics('US', 8);
 
   // Action Mutations
@@ -453,8 +454,19 @@ export default function DashboardPage() {
                       key={idx}
                       type="button"
                       onClick={() => {
-                        setInputUrl(tr.title);
-                        showNotification(`Trend selected: "${tr.title}" (${tr.traffic_approx} searches)`, 'info');
+                        const query = (tr.title || '').toLowerCase();
+                        // Check if any loaded trending video matches
+                        const matched = (allTrendingVideos || []).find((v) =>
+                          v.title?.toLowerCase().includes(query) ||
+                          v.channel_name?.toLowerCase().includes(query)
+                        );
+                        if (matched) {
+                          handleSelectTrending(matched.video_id, matched.url || `https://www.youtube.com/watch?v=${matched.video_id}`, matched);
+                          showNotification(`Analyzing trending video for "${tr.title}": ${matched.title}`, 'success');
+                        } else {
+                          useDiscoveryStore.getState().setIsTrendingModalOpen(true);
+                          showNotification(`Selected trend "${tr.title}" (${tr.traffic_approx} searches). Pick a verified viral hit:`, 'info');
+                        }
                       }}
                       className="px-2.5 py-1 rounded-full bg-card hover:bg-muted border border-border/80 text-foreground font-medium shrink-0 cursor-pointer flex items-center gap-1.5 transition-colors shadow-2xs"
                       title={`Trending search volume: ${tr.traffic_approx}`}

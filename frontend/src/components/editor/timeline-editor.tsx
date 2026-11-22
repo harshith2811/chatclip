@@ -611,7 +611,7 @@ export function TimelineEditor() {
 
 
   return (
-    <div className="space-y-2.5 h-[calc(100vh-5rem)] min-h-[580px] max-h-[840px] flex flex-col overflow-hidden">
+    <div className="space-y-2.5 min-h-[600px] lg:h-[calc(100vh-5.5rem)] lg:max-h-[880px] flex flex-col overflow-hidden">
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-popover text-popover-foreground border border-border shadow-2xl animate-in slide-in-from-bottom-4">

@@ -74,9 +74,9 @@ export const VerticalPreview: React.FC<VerticalPreviewProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 p-2 flex flex-col items-center justify-between overflow-y-auto gap-2 bg-muted/10">
+      <div className="flex-1 min-h-0 p-2 pb-4 flex flex-col items-center justify-between overflow-y-auto gap-2 bg-muted/10">
         {/* Smartphone Frame (constrained height) */}
-        <div className="relative h-[260px] sm:h-[285px] aspect-[9/16] rounded-[20px] overflow-hidden bg-black border-4 border-zinc-800 shadow-xl flex items-center justify-center select-none shrink-0">
+        <div className="relative h-[235px] sm:h-[255px] aspect-[9/16] rounded-[20px] overflow-hidden bg-black border-4 border-zinc-800 shadow-xl flex items-center justify-center select-none shrink-0">
           {/* Dynamic Island */}
           <div className="absolute top-1.5 w-12 h-2 rounded-full bg-zinc-900 z-30 pointer-events-none" />
 
@@ -227,7 +227,8 @@ export const VerticalPreview: React.FC<VerticalPreviewProps> = ({
               onChange={(e) => setHeadlineText(e.target.value)}
               placeholder="Hook headline overlay..."
               disabled={!showHeadline}
-              className="font-bold text-xs bg-background h-6 px-2"
+              title={headlineText}
+              className="font-semibold text-xs bg-background h-7 px-2.5 truncate"
             />
           </div>
 
@@ -237,21 +238,21 @@ export const VerticalPreview: React.FC<VerticalPreviewProps> = ({
               <Sparkles className="w-2.5 h-2.5 text-primary" />
               Caption Style
             </label>
-            <div className="grid grid-cols-2 gap-1">
+            <div className="grid grid-cols-2 gap-1.5">
               {SUBTITLE_STYLES.map((style) => (
                 <button
                   key={style.id}
                   type="button"
                   onClick={() => setActiveStyle(style.id)}
                   className={cn(
-                    'p-1 rounded border text-left transition-all text-xs font-medium cursor-pointer flex items-center justify-between',
+                    'h-7 px-2 rounded-md border text-left transition-all text-xs font-medium cursor-pointer flex items-center justify-between',
                     activeStyle === style.id
                       ? 'border-primary bg-primary/10 ring-1 ring-primary'
                       : 'border-border/60 bg-muted/20 hover:bg-muted/40 text-muted-foreground'
                   )}
                 >
                   <span className="font-bold text-[9px] truncate">{style.name}</span>
-                  <span className={cn('text-[7px] px-1 py-0.2 rounded font-bold', style.color)}>
+                  <span className={cn('text-[7px] px-1 py-0.2 rounded font-bold shrink-0 ml-1', style.color)}>
                     Aa
                   </span>
                 </button>
