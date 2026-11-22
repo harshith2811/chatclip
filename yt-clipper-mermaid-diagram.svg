@@ -1,0 +1,257 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2026.1805 1263.45" width="2026.1805" height="1263.45" style="--bg:#18181B;--fg:#F4F4F5;--line:#71717A;--muted:#A1A1AA;--surface:#27272A;--border:#3F3F46;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="seq-arrow" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <polygon points="0 0, 8 2.5, 0 5" fill="var(--_arrow)" />
+  </marker>
+  <marker id="seq-arrow-open" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="1" />
+  </marker>
+</defs>
+<line class="lifeline" data-actor="User" x1="129.22599999999997" y1="92.45" x2="129.22599999999997" y2="1233.45" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="6 4" />
+<line class="lifeline" data-actor="Cloud" x1="446.9279999999999" y1="70" x2="446.9279999999999" y2="1233.45" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="6 4" />
+<line class="lifeline" data-actor="DB" x1="875.1139999999998" y1="70" x2="875.1139999999998" y2="1233.45" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="6 4" />
+<line class="lifeline" data-actor="Worker" x1="1122.4579999999999" y1="70" x2="1122.4579999999999" y2="1233.45" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="6 4" />
+<line class="lifeline" data-actor="GPU" x1="1464.514" y1="70" x2="1464.514" y2="1233.45" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="6 4" />
+<line class="lifeline" data-actor="R2" x1="1676.6605" y1="70" x2="1676.6605" y2="1233.45" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="6 4" />
+<line class="lifeline" data-actor="Social" x1="1892.1415" y1="70" x2="1892.1415" y2="1233.45" stroke="var(--_line)" stroke-width="0.75" stroke-dasharray="6 4" />
+<g class="block" data-type="rect" data-label="rgb(240, 248, 255)">
+  <rect x="338.8134999999999" y="315.45" width="1429.289" height="360.00000000000006" rx="0" ry="0" fill="rgb(240, 248, 255)" stroke="none" stroke-width="1" opacity="0.3" />
+</g>
+<g class="block" data-type="rect" data-label="rgb(255, 250, 240)">
+  <rect x="1013.2319999999999" y="993.45" width="982.9485000000001" height="100" rx="0" ry="0" fill="rgb(255, 250, 240)" stroke="none" stroke-width="1" opacity="0.3" />
+</g>
+<g class="message" data-from="User" data-to="Cloud" data-label="1. Submit Video URL or Select Trending Video" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="1">
+  <line x1="129.22599999999997" y1="112.45" x2="446.9279999999999" y2="112.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="169.07699999999994" y="94.3" width="238" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="288.07699999999994" y="102.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">1. Submit Video URL or Select Trending Video</text>
+  <circle class="sequence-number" cx="129.22599999999997" cy="112.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="129.22599999999997" y="112.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">1</text>
+</g>
+<g class="message" data-from="Cloud" data-to="DB" data-label="2. Insert Job (status: QUEUED, stage: RENDER)" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="2">
+  <line x1="446.9279999999999" y1="152.45" x2="875.1139999999998" y2="152.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="536.5209999999998" y="134.29999999999998" width="249" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="661.0209999999998" y="142.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">2. Insert Job (status: QUEUED, stage: RENDER)</text>
+  <circle class="sequence-number" cx="446.9279999999999" cy="152.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="446.9279999999999" y="152.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">2</text>
+</g>
+<g class="message" data-from="Worker" data-to="Cloud" data-label="3. Outbound HTTPS POST /api/v1/worker/claim" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="3">
+  <line x1="1122.4579999999999" y1="192.45" x2="446.9279999999999" y2="192.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="661.1929999999999" y="174.29999999999998" width="247" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="784.6929999999999" y="182.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">3. Outbound HTTPS POST /api/v1/worker/claim</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="192.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="192.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">3</text>
+</g>
+<g class="message" data-from="Cloud" data-to="DB" data-label="4. Atomic UPDATE: status=CLAIMED, lease_expires_at=+120s" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="4">
+  <line x1="446.9279999999999" y1="232.45" x2="875.1139999999998" y2="232.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="497.02099999999984" y="214.29999999999998" width="328" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="661.0209999999998" y="222.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">4. Atomic UPDATE: status=CLAIMED, lease_expires_at=+120s</text>
+  <circle class="sequence-number" cx="446.9279999999999" cy="232.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="446.9279999999999" y="232.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">4</text>
+</g>
+<g class="message" data-from="Cloud" data-to="Worker" data-label="5. 200 OK (job_id, video_url, render_profile)" data-line-style="dashed" data-arrow-head="filled" data-self="false" data-step="5">
+  <line x1="446.9279999999999" y1="272.45" x2="1122.4579999999999" y2="272.45" stroke="var(--_line)" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" />
+  <rect x="669.1929999999999" y="254.29999999999998" width="231" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="784.6929999999999" y="262.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">5. 200 OK (job_id, video_url, render_profile)</text>
+  <circle class="sequence-number" cx="446.9279999999999" cy="272.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="446.9279999999999" y="272.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">5</text>
+</g>
+<g class="message" data-from="Worker" data-to="Worker" data-label="6. yt-dlp downloads 1080p source directly to local SSD" data-line-style="solid" data-arrow-head="filled" data-self="true" data-step="6">
+  <polyline points="1122.4579999999999,355.45 1152.4579999999999,355.45 1152.4579999999999,375.45 1122.4579999999999,375.45" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="1157.4579999999999" y="357.3" width="281" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="1160.4579999999999" y="365.45" font-size="11" text-anchor="start" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">6. yt-dlp downloads 1080p source directly to local SSD</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="355.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="355.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">6</text>
+</g>
+<g class="message" data-from="Worker" data-to="Cloud" data-label="7. Heartbeat + Progress (stage: INGEST, 20%)" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="7">
+  <line x1="1122.4579999999999" y1="425.45" x2="446.9279999999999" y2="425.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="664.1929999999999" y="407.3" width="241" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="784.6929999999999" y="415.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">7. Heartbeat + Progress (stage: INGEST, 20%)</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="425.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="425.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">7</text>
+</g>
+<g class="message" data-from="Worker" data-to="GPU" data-label="8. Faster-Whisper CUDA transcribes audio in VRAM" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="8">
+  <line x1="1122.4579999999999" y1="465.45" x2="1464.514" y2="465.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="1155.4859999999999" y="447.3" width="276" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="1293.4859999999999" y="455.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">8. Faster-Whisper CUDA transcribes audio in VRAM</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="465.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="465.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">8</text>
+</g>
+<g class="message" data-from="Worker" data-to="GPU" data-label="9. release_whisper_models() frees VRAM for video encoder" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="9">
+  <line x1="1122.4579999999999" y1="505.45" x2="1464.514" y2="505.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="1135.4859999999999" y="487.3" width="316" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="1293.4859999999999" y="495.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">9. release_whisper_models() frees VRAM for video encoder</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="505.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="505.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">9</text>
+</g>
+<g class="message" data-from="Worker" data-to="GPU" data-label="10. YuNet tracking + 1D QP kinematics + FFmpeg NVENC (200 fps)" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="10">
+  <line x1="1122.4579999999999" y1="545.45" x2="1464.514" y2="545.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="1126.4859999999999" y="527.3000000000001" width="334" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="1293.4859999999999" y="535.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">10. YuNet tracking + 1D QP kinematics + FFmpeg NVENC (200 fps)</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="545.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="545.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">10</text>
+</g>
+<g class="message" data-from="Worker" data-to="Worker" data-label="11. 12-point QA Gate verifies stream decodability" data-line-style="solid" data-arrow-head="filled" data-self="true" data-step="11">
+  <polyline points="1122.4579999999999,585.45 1152.4579999999999,585.45 1152.4579999999999,605.45 1122.4579999999999,605.45" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="1157.4579999999999" y="587.3000000000001" width="242" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="1160.4579999999999" y="595.45" font-size="11" text-anchor="start" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">11. 12-point QA Gate verifies stream decodability</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="585.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="585.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">11</text>
+</g>
+<g class="message" data-from="Worker" data-to="R2" data-label="12. Upload 200KB poster + 15MB 720p preview video" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="12">
+  <line x1="1122.4579999999999" y1="655.45" x2="1676.6605" y2="655.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="1263.5592499999998" y="637.3000000000001" width="272" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="1399.5592499999998" y="645.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">12. Upload 200KB poster + 15MB 720p preview video</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="655.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="655.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">12</text>
+</g>
+<g class="message" data-from="Worker" data-to="Cloud" data-label="13. POST /api/v1/worker/complete (stage: RENDER, R2 preview URLs)" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="13">
+  <line x1="1122.4579999999999" y1="695.45" x2="446.9279999999999" y2="695.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="604.6929999999999" y="677.3000000000001" width="360" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="784.6929999999999" y="685.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">13. POST /api/v1/worker/complete (stage: RENDER, R2 preview URLs)</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="695.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="695.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">13</text>
+</g>
+<g class="message" data-from="Cloud" data-to="DB" data-label="14. UPDATE jobs SET status=REVIEW_REQUIRED, stage=REVIEW" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="14">
+  <line x1="446.9279999999999" y1="735.45" x2="875.1139999999998" y2="735.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="486.02099999999984" y="717.3000000000001" width="350" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="661.0209999999998" y="725.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">14. UPDATE jobs SET status=REVIEW_REQUIRED, stage=REVIEW</text>
+  <circle class="sequence-number" cx="446.9279999999999" cy="735.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="446.9279999999999" y="735.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">14</text>
+</g>
+<g class="message" data-from="User" data-to="Cloud" data-label="15. User views Short in Cloud Web Studio (streams from R2)" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="15">
+  <line x1="129.22599999999997" y1="790.45" x2="446.9279999999999" y2="790.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="136.07699999999994" y="772.3000000000001" width="304" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="288.07699999999994" y="780.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">15. User views Short in Cloud Web Studio (streams from R2)</text>
+  <circle class="sequence-number" cx="129.22599999999997" cy="790.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="129.22599999999997" y="790.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">15</text>
+</g>
+<g class="message" data-from="User" data-to="Cloud" data-label="16. User approves title/captions, clicks &quot;Approve &amp; Publish&quot;" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="16">
+  <line x1="129.22599999999997" y1="830.45" x2="446.9279999999999" y2="830.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="134.07699999999994" y="812.3000000000001" width="308" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="288.07699999999994" y="820.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">16. User approves title/captions, clicks &quot;Approve &amp; Publish&quot;</text>
+  <circle class="sequence-number" cx="129.22599999999997" cy="830.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="129.22599999999997" y="830.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">16</text>
+</g>
+<g class="message" data-from="Cloud" data-to="DB" data-label="17. UPDATE jobs SET status=QUEUED, stage=PUBLISH, approved_by_user=true" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="17">
+  <line x1="446.9279999999999" y1="870.45" x2="875.1139999999998" y2="870.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="446.52099999999984" y="852.3000000000001" width="429" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="661.0209999999998" y="860.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">17. UPDATE jobs SET status=QUEUED, stage=PUBLISH, approved_by_user=true</text>
+  <circle class="sequence-number" cx="446.9279999999999" cy="870.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="446.9279999999999" y="870.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">17</text>
+</g>
+<g class="message" data-from="Worker" data-to="Cloud" data-label="18. POST /api/v1/worker/claim (claims PUBLISH stage)" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="18">
+  <line x1="1122.4579999999999" y1="910.45" x2="446.9279999999999" y2="910.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="644.1929999999999" y="892.3000000000001" width="281" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="784.6929999999999" y="900.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">18. POST /api/v1/worker/claim (claims PUBLISH stage)</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="910.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="910.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">18</text>
+</g>
+<g class="message" data-from="Cloud" data-to="Worker" data-label="19. 200 OK (publish payload, clip_path)" data-line-style="dashed" data-arrow-head="filled" data-self="false" data-step="19">
+  <line x1="446.9279999999999" y1="950.45" x2="1122.4579999999999" y2="950.45" stroke="var(--_line)" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" />
+  <rect x="684.1929999999999" y="932.3000000000001" width="201" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="784.6929999999999" y="940.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">19. 200 OK (publish payload, clip_path)</text>
+  <circle class="sequence-number" cx="446.9279999999999" cy="950.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="446.9279999999999" y="950.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">19</text>
+</g>
+<g class="message" data-from="Worker" data-to="Social" data-label="20. Publish to OmniPost (:3300) / Dedicated YouTube OAuth" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="20">
+  <line x1="1122.4579999999999" y1="1033.45" x2="1892.1415" y2="1033.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="1353.79975" y="1015.3000000000001" width="307" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="1507.29975" y="1023.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">20. Publish to OmniPost (:3300) / Dedicated YouTube OAuth</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="1033.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="1033.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">20</text>
+</g>
+<g class="message" data-from="Social" data-to="Worker" data-label="21. Returns live post URL and receipt_id" data-line-style="dashed" data-arrow-head="filled" data-self="false" data-step="21">
+  <line x1="1892.1415" y1="1073.45" x2="1122.4579999999999" y2="1073.45" stroke="var(--_line)" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" />
+  <rect x="1402.29975" y="1055.3" width="210" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="1507.29975" y="1063.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">21. Returns live post URL and receipt_id</text>
+  <circle class="sequence-number" cx="1892.1415" cy="1073.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1892.1415" y="1073.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">21</text>
+</g>
+<g class="message" data-from="Worker" data-to="Cloud" data-label="22. POST /api/v1/worker/complete (stage: PUBLISH, live URLs)" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="22">
+  <line x1="1122.4579999999999" y1="1113.45" x2="446.9279999999999" y2="1113.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="621.1929999999999" y="1095.3" width="327" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="784.6929999999999" y="1103.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">22. POST /api/v1/worker/complete (stage: PUBLISH, live URLs)</text>
+  <circle class="sequence-number" cx="1122.4579999999999" cy="1113.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="1122.4579999999999" y="1113.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">22</text>
+</g>
+<g class="message" data-from="Cloud" data-to="DB" data-label="23. UPDATE jobs SET status=PUBLISHED" data-line-style="solid" data-arrow-head="filled" data-self="false" data-step="23">
+  <line x1="446.9279999999999" y1="1153.45" x2="875.1139999999998" y2="1153.45" stroke="var(--_line)" stroke-width="1" marker-end="url(#seq-arrow)" />
+  <rect x="547.0209999999998" y="1135.3" width="228" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="661.0209999999998" y="1143.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">23. UPDATE jobs SET status=PUBLISHED</text>
+  <circle class="sequence-number" cx="446.9279999999999" cy="1153.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="446.9279999999999" y="1153.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">23</text>
+</g>
+<g class="message" data-from="Cloud" data-to="User" data-label="24. Studio displays verified live social links!" data-line-style="dashed" data-arrow-head="filled" data-self="false" data-step="24">
+  <line x1="446.9279999999999" y1="1193.45" x2="129.22599999999997" y2="1193.45" stroke="var(--_line)" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" />
+  <rect x="173.57699999999994" y="1175.3" width="229" height="16.3" rx="2" ry="2" fill="var(--bg)" />
+  <text x="288.07699999999994" y="1183.45" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">24. Studio displays verified live social links!</text>
+  <circle class="sequence-number" cx="446.9279999999999" cy="1193.45" r="9" fill="var(--_arrow)" stroke="var(--bg)" stroke-width="1" />
+  <text x="446.9279999999999" y="1193.45" class="sequence-number-label" font-size="10" text-anchor="middle" font-weight="600" fill="var(--bg)" dy="3.5">24</text>
+</g>
+<g class="note" data-position="over" data-actors="Worker,GPU">
+  <polygon points="1154.139,280.45 1426.8329999999999,280.45 1432.8329999999999,286.45 1432.8329999999999,303.45 1154.139,303.45" fill="var(--bg)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <polygon points="1426.8329999999999,280.45 1432.8329999999999,286.45 1426.8329999999999,286.45" fill="var(--_inner-stroke)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="1293.4859999999999" y="291.95" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">LOCAL EDGE PROCESSING (Zero Cloud Video Bytes)</text>
+</g>
+<g class="note" data-position="over" data-actors="User,Cloud">
+  <polygon points="131.8009999999999,743.45 438.35299999999995,743.45 444.35299999999995,749.45 444.35299999999995,766.45 131.8009999999999,766.45" fill="var(--bg)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <polygon points="438.35299999999995,743.45 444.35299999999995,749.45 438.35299999999995,749.45" fill="var(--_inner-stroke)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="288.07699999999994" y="754.95" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">STAGE B: HUMAN APPROVAL &amp; RESIDENTIAL PUBLISHING</text>
+</g>
+<g class="note" data-position="over" data-actors="Worker,Social">
+  <polygon points="1403.59275,958.45 1605.00675,958.45 1611.00675,964.45 1611.00675,981.45 1403.59275,981.45" fill="var(--bg)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <polygon points="1605.00675,958.45 1611.00675,964.45 1605.00675,964.45" fill="var(--_inner-stroke)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="1507.29975" y="969.95" font-size="11" text-anchor="middle" font-weight="400" fill="var(--_text-muted)" dy="3.8499999999999996">RESIDENTIAL SOCIAL DISTRIBUTION</text>
+</g>
+<g class="actor" data-id="User" data-label="User (Any Browser / Mobile)" data-type="actor">
+  <g transform="translate(111.22599999999997,32) scale(1.5)">
+    <path d="M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" fill="none" stroke="var(--_line)" stroke-width="0.6666666666666666" />
+    <path d="M15 10C15 11.6569 13.6569 13 12 13C10.3431 13 9 11.6569 9 10C9 8.34315 10.3431 7 12 7C13.6569 7 15 8.34315 15 10Z" fill="none" stroke="var(--_line)" stroke-width="0.6666666666666666" />
+    <path d="M5.62842 18.3563C7.08963 17.0398 9.39997 16 12 16C14.6 16 16.9104 17.0398 18.3716 18.3563" fill="none" stroke="var(--_line)" stroke-width="0.6666666666666666" />
+  </g>
+  <text x="129.22599999999997" y="84" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">User (Any Browser / Mobile)</text>
+</g>
+<g class="actor" data-id="Cloud" data-label="Render Cloud Control Plane" data-type="participant">
+  <rect x="348.8134999999999" y="30" width="196.22899999999996" height="40" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="446.9279999999999" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">Render Cloud Control Plane</text>
+</g>
+<g class="actor" data-id="DB" data-label="Cloud State Store (Neon/Turso)" data-type="participant">
+  <rect x="766.9959999999999" y="30" width="216.236" height="40" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="875.1139999999998" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">Cloud State Store (Neon/Turso)</text>
+</g>
+<g class="actor" data-id="Worker" data-label="Local Edge Worker Daemon" data-type="participant">
+  <rect x="1023.2319999999999" y="30" width="198.452" height="40" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="1122.4579999999999" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">Local Edge Worker Daemon</text>
+</g>
+<g class="actor" data-id="GPU" data-label="GTX 1650 (CUDA/NVENC)" data-type="participant">
+  <rect x="1373.8094999999998" y="30" width="181.40899999999993" height="40" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="1464.514" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">GTX 1650 (CUDA/NVENC)</text>
+</g>
+<g class="actor" data-id="R2" data-label="Cloudflare R2 Storage" data-type="participant">
+  <rect x="1595.2185" y="30" width="162.88399999999996" height="40" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="1676.6605" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">Cloudflare R2 Storage</text>
+</g>
+<g class="actor" data-id="Social" data-label="Local OmniPost / YouTube" data-type="participant">
+  <rect x="1798.1025" y="30" width="188.078" height="40" rx="4" ry="4" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="1892.1415" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="var(--_text)" dy="4.55">Local OmniPost / YouTube</text>
+</g>
+</svg>
