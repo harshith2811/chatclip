@@ -578,8 +578,8 @@ export function TimelineEditor() {
 
       {/* 3. Upper Deck: 3 Cards (Master 16:9 Canvas Left, Output Preview Center, Clip Settings Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
-        {/* Master Video Canvas (Left - 6 Cols) */}
-        <div className="lg:col-span-6 flex flex-col">
+        {/* Master Video Canvas (Left - 5 Cols) */}
+        <div className="lg:col-span-5 flex flex-col">
           <MasterVideoPlayer
             playerContainerRef={playerContainerRef}
             cropStageRef={cropStageRef}
@@ -635,8 +635,8 @@ export function TimelineEditor() {
           />
         </div>
 
-        {/* Clip Settings Card (Right - 3 Cols) */}
-        <div className="lg:col-span-3 flex flex-col">
+        {/* Clip Settings Card (Right - 4 Cols) */}
+        <div className="lg:col-span-4 flex flex-col">
           <ClipSettingsCard
             trimStart={trimStart}
             trimEnd={trimEnd}

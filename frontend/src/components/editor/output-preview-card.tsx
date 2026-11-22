@@ -88,9 +88,9 @@ export function OutputPreviewCard({
         <div
           className={cn(
             'relative rounded-[22px] overflow-hidden bg-black border-4 border-zinc-800 shadow-xl flex items-center justify-center select-none cursor-pointer group shrink-0',
-            selectedAspect === '9:16' && 'aspect-[9/16] h-[310px] sm:h-[330px] max-h-full',
-            selectedAspect === '1:1' && 'aspect-square h-[280px]',
-            selectedAspect === '4:5' && 'aspect-[4/5] h-[300px]'
+            selectedAspect === '9:16' && 'aspect-[9/16] h-[265px] sm:h-[285px] max-h-full',
+            selectedAspect === '1:1' && 'aspect-square h-[240px]',
+            selectedAspect === '4:5' && 'aspect-[4/5] h-[260px]'
           )}
           onClick={togglePlay}
         >

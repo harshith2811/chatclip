@@ -252,7 +252,10 @@ export function TimelineDeck({
           {rulerTicks.map((tick, idx) => (
             <div
               key={idx}
-              className="absolute top-0 flex flex-col items-center -translate-x-1/2"
+              className={cn(
+                'absolute top-0 flex flex-col items-center',
+                tick.percent > 92 ? '-translate-x-full pr-1' : tick.percent < 8 ? 'translate-x-0 pl-1' : '-translate-x-1/2'
+              )}
               style={{ left: `${tick.percent}%` }}
             >
               <span>{tick.label}</span>
@@ -278,22 +281,32 @@ export function TimelineDeck({
             }}
           />
 
-          {/* Left Handle: Blue Line + Blue In Pill Marker (Matching Mockup: 06:25.800) */}
+          {/* Left Handle: Blue Line + Blue In Pill Marker (Non-overlapping) */}
           <div
             className="absolute top-0 bottom-0 w-1 bg-blue-500 z-20 pointer-events-none shadow-sm"
             style={{ left: `${inPercent}%` }}
           >
-            <div className="absolute -top-6 -translate-x-1/2 px-2 py-0.5 rounded-full bg-blue-600 text-white font-mono text-[9px] font-black shadow-md border border-white/20 whitespace-nowrap">
+            <div
+              className={cn(
+                'absolute -top-6 px-2 py-0.5 rounded-full bg-blue-600 text-white font-mono text-[9px] font-black shadow-md border border-white/20 whitespace-nowrap transition-transform',
+                outPercent - inPercent < 12 ? '-translate-x-[90%]' : '-translate-x-1/2'
+              )}
+            >
               {formatPillTime(trimStart)}
             </div>
           </div>
 
-          {/* Right Handle: Red Line + Red Out Pill Marker (Matching Mockup: 07:22.300) */}
+          {/* Right Handle: Red Line + Red Out Pill Marker (Non-overlapping) */}
           <div
             className="absolute top-0 bottom-0 w-1 bg-rose-500 z-20 pointer-events-none shadow-sm"
             style={{ left: `${outPercent}%` }}
           >
-            <div className="absolute -top-6 -translate-x-1/2 px-2 py-0.5 rounded-full bg-rose-600 text-white font-mono text-[9px] font-black shadow-md border border-white/20 whitespace-nowrap">
+            <div
+              className={cn(
+                'absolute -top-6 px-2 py-0.5 rounded-full bg-rose-600 text-white font-mono text-[9px] font-black shadow-md border border-white/20 whitespace-nowrap transition-transform',
+                outPercent - inPercent < 12 ? 'translate-x-[10%]' : '-translate-x-1/2'
+              )}
+            >
               {formatPillTime(trimEnd)}
             </div>
           </div>
