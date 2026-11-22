@@ -354,7 +354,7 @@ async def enforce_studio_auth(request: Request, call_next):
 # CORS Configuration
 _cors_raw = os.getenv(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000,http://localhost:3050,http://127.0.0.1:3050,http://localhost:3107,http://127.0.0.1:3107",
+    "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000,http://127.0.0.1:3000,http://localhost:3050,http://127.0.0.1:3050,http://localhost:3600,http://127.0.0.1:3600,http://localhost:3107,http://127.0.0.1:3107",
 )
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip() and o.strip() != "*"]
 
