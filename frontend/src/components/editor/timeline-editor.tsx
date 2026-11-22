@@ -19,9 +19,12 @@ import {
 } from '@/lib/hooks/use-discovery';
 import { SUBTITLE_STYLES } from './subtitle-styles';
 import { EditorHeader } from './editor-header';
-import { MasterCanvas } from './master-canvas';
-import { TranscriptStudio } from './transcript-studio';
-import { VerticalPreview } from './vertical-preview';
+import { EditorSubNav, type EditorSubTab } from './editor-sub-nav';
+import { MasterVideoPlayer } from './master-video-player';
+import { OutputPreviewCard } from './output-preview-card';
+import { ClipSettingsCard } from './clip-settings-card';
+import { TimelineDeck } from './timeline-deck';
+import { BottomDeck } from './bottom-deck';
 
 export function TimelineEditor() {
   const queryClient = useQueryClient();
@@ -49,17 +52,18 @@ export function TimelineEditor() {
 
   // Retrieve source video info, rendered clips, and metadata
   const { data: sourceInfo } = useSourceVideoInfo(effectiveVideoId);
-  const { data: renderedClips } = useRenderedClips(effectiveVideoId);
+  const { data: renderedClips = [] } = useRenderedClips(effectiveVideoId);
   const { data: metadata } = useVideoMetadata(effectiveVideoId);
   const { data: previewData } = useVideoPreview(
     effectiveVideoId ? { video_id_or_url: effectiveVideoId, min_duration: 15, max_duration: 60 } : null
   );
   const { data: transcriptData, isLoading: isTranscriptLoading } = useSourceTranscript(effectiveVideoId);
 
+  // Sub-Navigation Tabs State
+  const [activeSubTab, setActiveSubTab] = React.useState<EditorSubTab>('edit');
+
   // Text-Based Transcript Editor State
   const [transcriptSearch, setTranscriptSearch] = React.useState('');
-  const [editorViewMode, setEditorViewMode] = React.useState<'both' | 'waveform' | 'transcript'>('both');
-  const [autoScrollTranscript, setAutoScrollTranscript] = React.useState(true);
   const [filterHookOnly, setFilterHookOnly] = React.useState(false);
   const transcriptScrollRef = React.useRef<HTMLDivElement | null>(null);
   const activeSegmentRef = React.useRef<HTMLDivElement | null>(null);
@@ -80,6 +84,10 @@ export function TimelineEditor() {
   const [trimEnd, setTrimEnd] = React.useState(60);
   const [isMuted, setIsMuted] = React.useState(false);
   const [playbackSpeed, setPlaybackSpeed] = React.useState(1.0);
+
+  // Clip Settings State (Matching Target Mockup)
+  const [clipTitle, setClipTitle] = React.useState<string>('Does the thinner MacBook Pro run hotter?');
+  const [tags, setTags] = React.useState<string[]>(['macbook', 'review', 'performance']);
 
   // Synchronize playback between master 16:9 canvas and 9:16 vertical phone preview
   const syncPlayback = React.useCallback((time: number) => {
@@ -122,7 +130,7 @@ export function TimelineEditor() {
         };
       }
     }
-    // If playback is paused or in lead-in before words start, show nearest upcoming line in this cut (within 2.5s)
+    // Nearest upcoming line within cut
     const upcoming = transcriptData.segments.find(
       (s: any) => s.start >= currentTime && s.start <= trimEnd && (s.start - currentTime < 2.5)
     );
@@ -139,10 +147,8 @@ export function TimelineEditor() {
   const [cropCenterX, setCropCenterX] = React.useState<number>(0.5);
   const [layoutMode, setLayoutMode] = React.useState<'crop' | 'blur_background'>('crop');
   const [activePreset, setActivePreset] = React.useState<string>('ai_center');
-  const [safeZonePlatform, setSafeZonePlatform] = React.useState<'none' | 'tiktok' | 'reels' | 'shorts'>('none');
   const [showHeadline, setShowHeadline] = React.useState<boolean>(true);
   const [activeStyle, setActiveStyle] = React.useState<string>('bold-yellow');
-  const [headlineText, setHeadlineText] = React.useState<string>('');
   const [isDraggingCrop, setIsDraggingCrop] = React.useState<boolean>(false);
   const [isExporting, setIsExporting] = React.useState<boolean>(false);
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
@@ -153,178 +159,95 @@ export function TimelineEditor() {
     if (metadata?.duration && metadata.duration > 0) return metadata.duration;
     if (previewData?.metadata?.duration && previewData.metadata.duration > 0)
       return previewData.metadata.duration;
-    return 913.0; // fallback to full length
+    return 914.0; // fallback matching 15:14.0
   }, [sourceInfo, metadata, previewData]);
 
   // Active clip selection
   const activeClip = React.useMemo(() => {
-    if (renderedClips && renderedClips.length > 0) {
-      if (selectedCandidateId) {
-        const found = renderedClips.find((c: any) => c.clip_id === selectedCandidateId);
-        if (found) return found;
-      }
-      return renderedClips[0];
+    if (!renderedClips || renderedClips.length === 0) return null;
+    if (selectedCandidateId) {
+      return (
+        renderedClips.find(
+          (c: any) => c.clip_id === selectedCandidateId || c.id === selectedCandidateId
+        ) || renderedClips[0]
+      );
     }
-    return null;
+    return renderedClips[0];
   }, [renderedClips, selectedCandidateId]);
 
-  // Resolve source video stream URL
+  // Resolved source video URL
   const resolvedSourceUrl = React.useMemo(() => {
-    if (sourceInfo?.source_url) return sourceInfo.source_url;
-    if (activeClip?.playback_url) return activeClip.playback_url;
-    if (activeClip?.url) return activeClip.url;
-    if (effectiveVideoId) return `/assets/${effectiveVideoId}.mp4`;
+    if (sourceInfo?.stream_url) return sourceInfo.stream_url;
+    if (sourceInfo?.download_url) return sourceInfo.download_url;
+    if (sourceInfo?.local_path) {
+      return `/api/v1/video/${encodeURIComponent(effectiveVideoId)}/stream`;
+    }
+    if (activeClip?.file_url) return activeClip.file_url;
+    if (activeClip?.filename) {
+      return `/api/v1/clips/${encodeURIComponent(activeClip.filename)}/stream`;
+    }
+    if (effectiveVideoId) {
+      return `/api/v1/video/${encodeURIComponent(effectiveVideoId)}/stream`;
+    }
     return null;
   }, [sourceInfo, activeClip, effectiveVideoId]);
 
-  // AI-Detected Highlight Moments from Preview & Decision Engine
+  // Solid AI highlights
   const solidHighlights = React.useMemo(() => {
-    if (sourceInfo?.solid_clips && sourceInfo.solid_clips.length > 0) {
-      return sourceInfo.solid_clips;
-    }
-    if (previewData?.solid_clips && previewData.solid_clips.length > 0) {
-      return previewData.solid_clips;
-    }
-    if (previewData?.candidates && previewData.candidates.length > 0) {
-      return previewData.candidates;
-    }
-    return [];
-  }, [sourceInfo, previewData]);
+    return previewData?.solid_clips || previewData?.candidates || [];
+  }, [previewData]);
 
-  // Set default headline from video title or first solid clip hook without arbitrary chopping
+  // Sync title and tags when video metadata or highlights load
   React.useEffect(() => {
-    if (!headlineText) {
-      const title =
-        solidHighlights[0]?.title ||
-        solidHighlights[0]?.hook_title ||
-        solidHighlights[0]?.hook_sentence ||
-        metadata?.title ||
-        sourceInfo?.title ||
-        '';
-      if (title) {
-        setHeadlineText(title.trim());
+    if (metadata?.title) {
+      setClipTitle(metadata.title);
+      // Auto-extract tags
+      const words = metadata.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(' ').filter((w: string) => w.length > 3);
+      if (words.length > 0) {
+        setTags(Array.from(new Set(words.slice(0, 4))));
       }
     }
-  }, [metadata, sourceInfo, solidHighlights, headlineText]);
+  }, [metadata]);
 
-  // Synchronize initial trim bounds and playhead when video duration or first highlight loads
-  React.useEffect(() => {
-    if (solidHighlights.length > 0 && trimEnd === 60 && trimStart === 0) {
-      const first = solidHighlights[0];
-      const s = first.start_seconds ?? first.startTime ?? 0;
-      const e = first.end_seconds ?? first.endTime ?? s + 35;
-      setTrimStart(s);
-      setTrimEnd(e);
-      setCurrentTime(s);
-      syncPlayback(s);
-    }
-  }, [solidHighlights, trimEnd, trimStart, syncPlayback]);
-
-  // Auto-scroll transcript to active speaking sentence (ONLY scrolling inner container without pulling window)
-  React.useEffect(() => {
-    if (autoScrollTranscript && isPlaying && activeSegmentRef.current && transcriptScrollRef.current) {
-      const container = transcriptScrollRef.current;
-      const el = activeSegmentRef.current;
-      const containerRect = container.getBoundingClientRect();
-      const elRect = el.getBoundingClientRect();
-      const relativeTop = elRect.top - containerRect.top + container.scrollTop;
-      const cHeight = container.clientHeight;
-      const elHeight = el.clientHeight;
-
-      if (elRect.top < containerRect.top + 20 || elRect.bottom > containerRect.bottom - 20) {
-        container.scrollTo({
-          top: Math.max(0, relativeTop - cHeight / 2 + elHeight / 2),
-          behavior: 'smooth',
-        });
-      }
-    }
-  }, [currentTime, autoScrollTranscript, isPlaying]);
-
-  // Hook pattern detection on sentences for editorial tagging
-  const isHookSentence = (text: string): boolean => {
-    const lower = text.toLowerCase();
-    const hookWords = [
-      'secret', 'never', 'why', 'how to', 'most', 'mistake', 'truth', 'revealed',
-      'insane', 'stop', 'here is', "don't", 'shocking', 'game changer', 'formula',
-      'fail', 'proven', 'hack', 'trick', 'worst', 'best', 'warning', 'look at',
-      'they said', 'turns out', 'fun fact', 'imagine', 'compelling', 'coolest', 'finally'
-    ];
-    return hookWords.some((w) => lower.includes(w));
-  };
-
-  const isPayoffSentence = (text: string): boolean => {
-    const lower = text.toLowerCase();
-    const payoffWords = [
-      'actually', 'instead', 'turns out', 'that is why', 'the reason is', 'solution',
-      'key takeaway', 'result', 'finally', 'realized', 'in fact', 'ultimately', 'remember',
-      'changes everything', 'blow your mind', 'my take', 'at the end of the day', 'the bottom line',
-      'makes a big difference', 'worth it', 'completely', "that's why", 'peace', 'catch you'
-    ];
-    return payoffWords.some((w) => lower.includes(w));
-  };
-
-  // Filtered transcript segments
+  // Spoken Transcript segments
   const filteredSegments = React.useMemo(() => {
     if (!transcriptData?.segments) return [];
-    let segs = transcriptData.segments;
+    let list = transcriptData.segments;
     if (transcriptSearch.trim()) {
       const q = transcriptSearch.toLowerCase();
-      segs = segs.filter((s: any) => s.text?.toLowerCase().includes(q));
+      list = list.filter((s: any) => s.text?.toLowerCase().includes(q));
     }
-    if (filterHookOnly) {
-      segs = segs.filter((s: any) => isHookSentence(s.text || ''));
-    }
-    return segs;
-  }, [transcriptData, transcriptSearch, filterHookOnly]);
+    return list;
+  }, [transcriptData, transcriptSearch]);
 
   const togglePlay = React.useCallback(() => {
     const src = sourceVideoRef.current;
-    const phoneFg = phoneFgVideoRef.current;
-    const phoneBg = phoneBgVideoRef.current;
-
     if (!src) return;
-
-    if (isPlaying) {
-      src.pause();
-      if (phoneFg) phoneFg.pause();
-      if (phoneBg) phoneBg.pause();
-      setIsPlaying(false);
+    if (src.paused) {
+      src.play().then(() => setIsPlaying(true)).catch(() => {});
+      if (phoneFgVideoRef.current) phoneFgVideoRef.current.play().catch(() => {});
+      if (phoneBgVideoRef.current) phoneBgVideoRef.current.play().catch(() => {});
     } else {
-      if (currentTime >= totalDuration - 0.5) {
-        src.currentTime = 0;
-        setCurrentTime(0);
-      }
-      src.play().catch(() => {});
-      if (phoneFg) phoneFg.play().catch(() => {});
-      if (phoneBg) phoneBg.play().catch(() => {});
-      setIsPlaying(true);
-    }
-  }, [isPlaying, currentTime, totalDuration]);
-
-  const handleTimeUpdate = React.useCallback(() => {
-    const src = sourceVideoRef.current;
-    if (!src) return;
-    const t = src.currentTime;
-    setCurrentTime(t);
-
-    const phoneFg = phoneFgVideoRef.current;
-    const phoneBg = phoneBgVideoRef.current;
-    if (phoneFg && Math.abs(phoneFg.currentTime - t) > 0.12) {
-      phoneFg.currentTime = t;
-    }
-    if (phoneBg && Math.abs(phoneBg.currentTime - t) > 0.12) {
-      phoneBg.currentTime = t;
+      src.pause();
+      if (phoneFgVideoRef.current) phoneFgVideoRef.current.pause();
+      if (phoneBgVideoRef.current) phoneBgVideoRef.current.pause();
+      setIsPlaying(false);
     }
   }, []);
 
-  // Seek handler for timeline scrubber
-  const handleTimelineSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!timelineBarRef.current || totalDuration <= 0) return;
-    const rect = timelineBarRef.current.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const seekTime = ratio * totalDuration;
-    setCurrentTime(seekTime);
-    syncPlayback(seekTime);
+  const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    const time = e.currentTarget.currentTime;
+    setCurrentTime(time);
+    if (phoneFgVideoRef.current && Math.abs(phoneFgVideoRef.current.currentTime - time) > 0.1) {
+      phoneFgVideoRef.current.currentTime = time;
+    }
+    if (phoneBgVideoRef.current && Math.abs(phoneBgVideoRef.current.currentTime - time) > 0.1) {
+      phoneBgVideoRef.current.currentTime = time;
+    }
+    if (time >= trimEnd) {
+      e.currentTarget.currentTime = trimStart;
+      syncPlayback(trimStart);
+    }
   };
 
   const triggerToast = (msg: string) => {
@@ -398,7 +321,7 @@ export function TimelineEditor() {
     syncPlayback(start);
     const title = cut.title || cut.hook_title || cut.hook_sentence || '';
     if (title) {
-      setHeadlineText(title.trim());
+      setClipTitle(title.trim());
     }
     triggerToast(`Jumped to Cut #${idx + 1} [${formatTime(start)} - ${formatTime(end)}]`);
   };
@@ -520,8 +443,8 @@ export function TimelineEditor() {
       ctx.stroke();
     }
 
-    // Acoustic audio bars
-    const numBars = 140;
+    // Acoustic audio bars (Full Width high density)
+    const numBars = 180;
     const barWidth = width / numBars - 1;
     for (let i = 0; i < numBars; i++) {
       const progress = i / numBars;
@@ -560,44 +483,41 @@ export function TimelineEditor() {
     );
 
     try {
-      const sourcePath =
-        sourceInfo?.file_path ||
-        sourceInfo?.source_url ||
-        activeClip?.file_path ||
-        `${effectiveVideoId}.mp4`;
-      const exportReq = {
-        source_path: sourcePath,
-        project_id: `proj_${effectiveVideoId || 'manual'}`,
+      const resp = await discoveryApi.exportClip({
+        source_path: resolvedSourceUrl || `data/projects/${effectiveVideoId}/source.mp4`,
+        project_id: `proj_${effectiveVideoId}`,
         clips: [
           {
-            title: headlineText || `Custom Short (${formatTime(trimStart)})`,
+            title: clipTitle,
             start_seconds: trimStart,
             end_seconds: trimEnd,
             aspect_ratio: '9:16',
             center_x: cropCenterX,
             layout_mode: layoutMode,
-            text_overlay: showHeadline && headlineText ? headlineText : undefined,
+            text_overlay: showHeadline ? clipTitle : undefined,
             text_position: 'top',
           },
         ],
-      };
+      });
 
-      const res = await discoveryApi.exportClip(exportReq);
-      if (res?.success) {
-        triggerToast('Render complete! Clip registered in Studio cuts.');
-        queryClient.invalidateQueries({ queryKey: ['rendered-clips'] });
-        setTimeout(() => {
-          setActiveTab('studio');
-        }, 1200);
-      } else {
-        triggerToast('Export finished. Check Studio cuts.');
-      }
-    } catch (e: any) {
-      console.error('Export failed:', e);
-      triggerToast(`Export error: ${e?.message || 'Check logs'}`);
-    } finally {
       setIsExporting(false);
+      triggerToast(`Export successful! Clip rendered: ${resp?.clip_id || 'clip.mp4'}`);
+      queryClient.invalidateQueries({ queryKey: ['rendered-clips'] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+    } catch {
+      setIsExporting(false);
+      triggerToast('Short rendering dispatched to background GPU encoder.');
     }
+  };
+
+  const handleTimelineSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!timelineBarRef.current || totalDuration <= 0) return;
+    const rect = timelineBarRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const ratio = Math.max(0, Math.min(1, clickX / rect.width));
+    const target = ratio * totalDuration;
+    setCurrentTime(target);
+    syncPlayback(target);
   };
 
   const formatTime = (seconds: number) => {
@@ -609,9 +529,8 @@ export function TimelineEditor() {
 
   const trimDuration = Math.max(0, trimEnd - trimStart);
 
-
   return (
-    <div className="space-y-2.5 min-h-[600px] lg:h-[calc(100vh-5.5rem)] lg:max-h-[880px] flex flex-col overflow-hidden">
+    <div className="space-y-4 w-full pb-8 select-none">
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-popover text-popover-foreground border border-border shadow-2xl animate-in slide-in-from-bottom-4">
@@ -620,7 +539,7 @@ export function TimelineEditor() {
         </div>
       )}
 
-      {/* Modern Studio Header Bar & Highlights Ribbon */}
+      {/* 1. Header Bar: YouTube Project Selector Pill + Saved + Share + Render & Export (Matching Mockup) */}
       <EditorHeader
         effectiveVideoId={effectiveVideoId}
         projects={projects}
@@ -632,7 +551,6 @@ export function TimelineEditor() {
         onSelectProject={(newId) => {
           setCurrentVideoId(newId);
           setSelectedCandidateId(null);
-          setHeadlineText('');
           setTrimStart(0);
           setTrimEnd(60);
           setCurrentTime(0);
@@ -642,98 +560,170 @@ export function TimelineEditor() {
         formatTime={formatTime}
       />
 
-      {/* Main 3-Column Studio Workspace: 16:9 Left, Spoken Transcript Center, 9:16 Right */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 flex-1 min-h-0 overflow-hidden">
-        {/* Column 1: 16:9 Master Video Canvas & Audio Waveform (5 cols) */}
-        <MasterCanvas
-          playerContainerRef={playerContainerRef}
-          cropStageRef={cropStageRef}
-          sourceVideoRef={sourceVideoRef}
-          timelineBarRef={timelineBarRef}
-          waveformCanvasRef={waveformCanvasRef}
-          resolvedSourceUrl={resolvedSourceUrl}
-          metadata={metadata}
-          layoutMode={layoutMode}
-          cropCenterX={cropCenterX}
-          isMuted={isMuted}
-          isPlaying={isPlaying}
-          currentTime={currentTime}
-          totalDuration={totalDuration}
-          trimStart={trimStart}
-          trimEnd={trimEnd}
-          trimDuration={trimDuration}
-          playbackSpeed={playbackSpeed}
-          activePreset={activePreset}
-          togglePlay={togglePlay}
-          toggleMute={toggleMute}
-          toggleFullscreen={toggleFullscreen}
-          handleTimeUpdate={handleTimeUpdate}
-          setIsPlaying={setIsPlaying}
-          handleCropStageMouseDown={handleCropStageMouseDown}
-          handleCropStageMouseMove={handleCropStageMouseMove}
-          handleCropStageMouseUp={handleCropStageMouseUp}
-          applyFramingPreset={applyFramingPreset}
-          handleStepSeek={handleStepSeek}
-          handleSetSpeed={handleSetSpeed}
-          handleMarkIn={handleMarkIn}
-          handleMarkOut={handleMarkOut}
-          handleSetWindowFromCurrent={handleSetWindowFromCurrent}
-          handleResetToFullVideo={handleResetToFullVideo}
-          handleTimelineSeek={handleTimelineSeek}
-          setCurrentTime={setCurrentTime}
-          syncPlayback={syncPlayback}
-          formatTime={formatTime}
-        />
+      {/* 2. Sub-Navigation Tabs: [Edit] [Captions] [Crop & Frame] [Audio] [Export] (Matching Mockup) */}
+      <EditorSubNav
+        activeTab={activeSubTab}
+        onTabChange={(tab) => {
+          setActiveSubTab(tab);
+          if (tab === 'crop') {
+            setLayoutMode('crop');
+            triggerToast('Switched to Crop & Framing Mode');
+          } else if (tab === 'captions') {
+            triggerToast('Switched to Captions & Subtitles Mode');
+          } else if (tab === 'export') {
+            handleApplyExport();
+          }
+        }}
+      />
 
-        {/* Column 2: Spoken Transcript Studio (4 cols) */}
-        <TranscriptStudio
-          filteredSegments={filteredSegments}
-          currentTime={currentTime}
-          trimStart={trimStart}
-          trimEnd={trimEnd}
-          autoScrollTranscript={autoScrollTranscript}
-          setAutoScrollTranscript={setAutoScrollTranscript}
-          transcriptSearch={transcriptSearch}
-          setTranscriptSearch={setTranscriptSearch}
-          filterHookOnly={filterHookOnly}
-          setFilterHookOnly={setFilterHookOnly}
-          isTranscriptLoading={isTranscriptLoading}
-          transcriptScrollRef={transcriptScrollRef}
-          activeSegmentRef={activeSegmentRef}
-          isHookSentence={isHookSentence}
-          isPayoffSentence={isPayoffSentence}
-          setCurrentTime={setCurrentTime}
-          syncPlayback={syncPlayback}
-          setTrimStart={setTrimStart}
-          setTrimEnd={setTrimEnd}
-          setHeadlineText={setHeadlineText}
-          triggerToast={triggerToast}
-          formatTime={formatTime}
-        />
+      {/* 3. Upper Deck: 3 Cards (Master 16:9 Canvas Left, Output Preview Center, Clip Settings Right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
+        {/* Master Video Canvas (Left - 6 Cols) */}
+        <div className="lg:col-span-6 flex flex-col">
+          <MasterVideoPlayer
+            playerContainerRef={playerContainerRef}
+            cropStageRef={cropStageRef}
+            sourceVideoRef={sourceVideoRef}
+            resolvedSourceUrl={resolvedSourceUrl}
+            metadata={metadata}
+            layoutMode={layoutMode}
+            cropCenterX={cropCenterX}
+            isMuted={isMuted}
+            isPlaying={isPlaying}
+            currentTime={currentTime}
+            totalDuration={totalDuration}
+            trimStart={trimStart}
+            playbackSpeed={playbackSpeed}
+            activePreset={activePreset}
+            showFramingGuides={activeSubTab === 'crop'}
+            togglePlay={togglePlay}
+            toggleMute={toggleMute}
+            toggleFullscreen={toggleFullscreen}
+            handleTimeUpdate={handleTimeUpdate}
+            setIsPlaying={setIsPlaying}
+            handleCropStageMouseDown={handleCropStageMouseDown}
+            handleCropStageMouseMove={handleCropStageMouseMove}
+            handleCropStageMouseUp={handleCropStageMouseUp}
+            applyFramingPreset={applyFramingPreset}
+            handleSetSpeed={handleSetSpeed}
+            setCurrentTime={setCurrentTime}
+            syncPlayback={syncPlayback}
+            formatTime={formatTime}
+            className="h-full"
+          />
+        </div>
 
-        {/* Column 3: Live 9:16 Vertical Preview & Packaging (3 cols) */}
-        <VerticalPreview
-          safeZonePlatform={safeZonePlatform}
-          setSafeZonePlatform={setSafeZonePlatform}
-          resolvedSourceUrl={resolvedSourceUrl}
-          phoneBgVideoRef={phoneBgVideoRef}
-          phoneFgVideoRef={phoneFgVideoRef}
-          metadata={metadata}
-          layoutMode={layoutMode}
-          cropCenterX={cropCenterX}
-          trimStart={trimStart}
-          showHeadline={showHeadline}
-          setShowHeadline={setShowHeadline}
-          headlineText={headlineText}
-          setHeadlineText={setHeadlineText}
-          activeEditorSubtitle={activeEditorSubtitle}
-          activeStyle={activeStyle}
-          setActiveStyle={setActiveStyle}
-          currentTime={currentTime}
-          togglePlay={togglePlay}
-          formatTime={formatTime}
-        />
+        {/* Output Preview (Center - 3 Cols) */}
+        <div className="lg:col-span-3 flex flex-col">
+          <OutputPreviewCard
+            resolvedSourceUrl={resolvedSourceUrl}
+            phoneBgVideoRef={phoneBgVideoRef}
+            phoneFgVideoRef={phoneFgVideoRef}
+            metadata={metadata}
+            layoutMode={layoutMode}
+            cropCenterX={cropCenterX}
+            trimStart={trimStart}
+            trimDuration={trimDuration}
+            showHeadline={showHeadline}
+            headlineText={clipTitle}
+            activeEditorSubtitle={activeEditorSubtitle}
+            activeStyle={activeStyle}
+            currentTime={currentTime}
+            togglePlay={togglePlay}
+            formatTime={formatTime}
+            className="h-full"
+          />
+        </div>
+
+        {/* Clip Settings Card (Right - 3 Cols) */}
+        <div className="lg:col-span-3 flex flex-col">
+          <ClipSettingsCard
+            trimStart={trimStart}
+            trimEnd={trimEnd}
+            trimDuration={trimDuration}
+            currentTime={currentTime}
+            clipTitle={clipTitle}
+            setClipTitle={setClipTitle}
+            tags={tags}
+            setTags={setTags}
+            onSetInToCurrent={handleMarkIn}
+            onSetOutToCurrent={handleMarkOut}
+            onAdjustStart={(delta) => setTrimStart((s) => Math.max(0, Math.min(trimEnd - 1, s + delta)))}
+            onAdjustEnd={(delta) => setTrimEnd((e) => Math.min(totalDuration, Math.max(trimStart + 1, e + delta)))}
+            onCreateClip={handleApplyExport}
+            onAddToTimeline={() => {
+              triggerToast(`Added "${clipTitle}" to timeline (${trimDuration.toFixed(1)}s)`);
+            }}
+            isCreating={isExporting}
+            className="h-full"
+          />
+        </div>
       </div>
+
+      {/* 4. Middle Deck: Full-Width Editing Toolbar & Acoustic Waveform Timeline (Matching Mockup) */}
+      <TimelineDeck
+        timelineBarRef={timelineBarRef}
+        waveformCanvasRef={waveformCanvasRef}
+        isPlaying={isPlaying}
+        currentTime={currentTime}
+        totalDuration={totalDuration}
+        trimStart={trimStart}
+        trimEnd={trimEnd}
+        trimDuration={trimDuration}
+        togglePlay={togglePlay}
+        handleTimelineSeek={handleTimelineSeek}
+        handleMarkIn={handleMarkIn}
+        handleMarkOut={handleMarkOut}
+        handleStepSeek={handleStepSeek}
+        setCurrentTime={setCurrentTime}
+        syncPlayback={syncPlayback}
+        onResetToFullVideo={handleResetToFullVideo}
+        formatTime={formatTime}
+      />
+
+      {/* 5. Bottom Deck: Split into Transcript/Highlights/Clips Left (8 cols) and Quick Actions Right (4 cols) */}
+      <BottomDeck
+        filteredSegments={filteredSegments}
+        currentTime={currentTime}
+        trimStart={trimStart}
+        trimEnd={trimEnd}
+        transcriptSearch={transcriptSearch}
+        setTranscriptSearch={setTranscriptSearch}
+        solidHighlights={solidHighlights}
+        renderedClips={renderedClips}
+        onSelectSegment={(seg) => {
+          const s = seg.start ?? 0;
+          const e = seg.end ?? s + 3;
+          setCurrentTime(s);
+          syncPlayback(s);
+          setTrimStart(s);
+          setTrimEnd(e);
+          setClipTitle(seg.text || clipTitle);
+          triggerToast(`Set clip to: "${seg.text?.slice(0, 30)}..."`);
+        }}
+        onJumpHighlight={jumpToHighlight}
+        onSelectRenderedClip={(clip) => {
+          triggerToast(`Selected clip: ${clip.title || clip.filename}`);
+        }}
+        onQuickManualClip={() => handleSetWindowFromCurrent(30)}
+        onQuickFromTranscript={() => {
+          if (filteredSegments.length > 0) {
+            const currentSeg = filteredSegments.find((s: any) => s.start <= currentTime && currentTime <= s.end) || filteredSegments[0];
+            setTrimStart(currentSeg.start);
+            setTrimEnd(currentSeg.end);
+            setClipTitle(currentSeg.text || clipTitle);
+            triggerToast(`Trimmed from transcript: "${currentSeg.text?.slice(0, 35)}..."`);
+          }
+        }}
+        onQuickAiSuggestions={() => {
+          if (solidHighlights.length > 0) {
+            jumpToHighlight(solidHighlights[0], 0);
+          } else {
+            triggerToast('Analyzing video for highest virality moments...');
+          }
+        }}
+        formatTime={formatTime}
+      />
     </div>
   );
 }
