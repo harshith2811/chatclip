@@ -13,7 +13,7 @@ export function useVideoMetadata(videoIdOrUrl: string | null) {
 
 export function useVideoPreview(req: PreviewRequest | null) {
   return useQuery({
-    queryKey: ['video-preview', req?.video_id_or_url, req?.min_duration, req?.max_duration],
+    queryKey: ['video-preview', req?.video_id_or_url, req?.min_duration, req?.max_duration, req?.max_clips],
     queryFn: () => discoveryApi.getPreview(req!),
     enabled: !!req?.video_id_or_url && req.video_id_or_url.trim().length >= 11,
     staleTime: 1000 * 60 * 5, // 5 minutes

@@ -1,5 +1,5 @@
-# YouTube Clipping Intelligence Platform
-## Enterprise AI Video Discovery, Kinetic 9:16 Reframing & Multi-Platform Production
+# ChatClip
+## Viral-moment discovery, configurable multi-reel batches, and 9:16 production
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python)](https://python.org)
 [![Next.js](https://img.shields.io/badge/Next.js-15.5-black?logo=next.js)](https://nextjs.org)
@@ -8,7 +8,9 @@
 [![Hardware](https://img.shields.io/badge/Hardware-%E2%89%A44GB%20VRAM%20%7C%20GTX%201650%20Ready-orange)](docs/RELEASE_READINESS_REPORT.md)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-An enterprise-grade, research-driven autonomous video discovery, audience retention intelligence, and vertical 9:16 clip production engine. Designed for automated multi-platform publishing workflows across YouTube Shorts, Instagram Reels, TikTok, and X, paired with real-time Google Trends & YouTube search demand velocity, kinematic active speaker framing, and an integrated Model Context Protocol (MCP) server for agentic orchestration.
+ChatClip is a research-driven autonomous video discovery, audience-retention intelligence, and vertical 9:16 production engine. One source can produce a configurable batch of 1–24 distinct, virality-ranked clips for YouTube Shorts, Instagram Reels, TikTok, and X. It combines retention signals, hook and narrative scoring, trend velocity, non-overlap safeguards, active-speaker framing, and an integrated Model Context Protocol (MCP) server.
+
+> Virality is probabilistic, not guaranteed. ChatClip ranks moments by measurable signals and reports when a source does not contain enough distinct viable material instead of duplicating clips.
 
 ---
 
@@ -180,8 +182,8 @@ The platform connects to social distribution channels via:
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/harshith2811/yt-clipping-intelligence.git
-cd yt-clipping-intelligence
+git clone https://github.com/harshith2811/chatclip.git
+cd chatclip
 
 # 2. Setup Python environment
 python -m venv venv
@@ -218,7 +220,7 @@ Before processing a source, register evidence that you own or are authorized to 
 ```bash
 yt-clip rights register --video-id VIDEO_ID --basis OWNED --owner "Your Name" --proof "Internal asset record"
 yt-clip ingest --video-id VIDEO_ID
-yt-clip run --video-id VIDEO_ID --dry-run --max-clips 3
+yt-clip run --video-id VIDEO_ID --dry-run --max-clips 8
 ```
 
 ---

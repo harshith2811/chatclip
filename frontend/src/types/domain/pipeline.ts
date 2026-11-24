@@ -24,6 +24,8 @@ import type {
 export interface RenderRequest {
   video_id_or_url: string;
   max_clips?: number;
+  selected_candidate_ids?: string[] | null;
+  fill_to_target?: boolean;
   layout?: LayoutMode | string;
   subtitle_preset?: SubtitlePreset | string;
   enable_polish?: boolean;

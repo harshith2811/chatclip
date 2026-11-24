@@ -42,6 +42,8 @@ export interface MetadataCardProps {
   onOpenStudio?: () => void;
   isRendering?: boolean;
   candidatesCount?: number;
+  targetClipCount?: number;
+  onTargetClipCountChange?: (count: number) => void;
   videoVelocity?: {
     views_per_hour?: number;
     velocity_tier?: string;
@@ -57,6 +59,8 @@ export function MetadataCard({
   onOpenStudio,
   isRendering = false,
   candidatesCount = 0,
+  targetClipCount = 8,
+  onTargetClipCountChange,
   videoVelocity,
 }: MetadataCardProps) {
   const viewsFormatted =
@@ -215,6 +219,21 @@ export function MetadataCard({
             </div>
 
             <div className="space-y-2 pt-1">
+              <label className="flex items-center justify-between gap-3 text-[11px] font-semibold text-muted-foreground">
+                <span>Clips to generate</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={24}
+                  value={targetClipCount}
+                  onChange={(event) => {
+                    const next = Math.max(1, Math.min(24, Number(event.target.value) || 1));
+                    onTargetClipCountChange?.(next);
+                  }}
+                  className="h-8 w-16 rounded-md border border-border bg-background px-2 text-center font-mono text-sm font-bold text-foreground"
+                  aria-label="Number of clips to generate"
+                />
+              </label>
               <Button
                 type="button"
                 size="default"
@@ -227,7 +246,7 @@ export function MetadataCard({
                 ) : (
                   <Sparkles className="w-4 h-4 fill-current" />
                 )}
-                <span>{isRendering ? 'Rendering Shorts...' : 'Render Clips'}</span>
+                <span>{isRendering ? `Rendering ${targetClipCount} Shorts...` : `Render ${targetClipCount} Clips`}</span>
               </Button>
 
               <Button

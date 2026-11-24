@@ -192,7 +192,7 @@ class VideoEditorEngine:
                     y_pos = "h*0.82"
 
                 drawtext_filter = (
-                    f"drawtext=textfile='{esc_tf_path}':fontcolor=white:fontsize=42:"
+                    f"drawtext=textfile='{esc_tf_path}':expansion=none:fontcolor=white:fontsize=42:"
                     f"box=1:boxcolor=black@0.65:boxborderw=14:x=(w-text_w)/2:y={y_pos}"
                 )
 

@@ -55,11 +55,27 @@ class SupoClipAdapter:
         }
 
     def list_fonts(self) -> List[str]:
-        """Lists available TTF fonts in the fonts directory."""
-        if not os.path.exists(self.fonts_dir):
-            return []
-        ttfs = glob.glob(os.path.join(self.fonts_dir, "*.ttf"))
-        return [os.path.splitext(os.path.basename(p))[0] for p in ttfs]
+        """Lists packaged fonts, falling back to locally installed system fonts."""
+        font_paths: List[str] = []
+        if os.path.exists(self.fonts_dir):
+            font_paths.extend(glob.glob(os.path.join(self.fonts_dir, "*.ttf")))
+            font_paths.extend(glob.glob(os.path.join(self.fonts_dir, "*.otf")))
+
+        if not font_paths:
+            system_font_dirs = [
+                os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
+                "/usr/share/fonts",
+                "/usr/local/share/fonts",
+                os.path.expanduser("~/Library/Fonts"),
+                "/Library/Fonts",
+            ]
+            for font_dir in system_font_dirs:
+                if not os.path.isdir(font_dir):
+                    continue
+                font_paths.extend(glob.glob(os.path.join(font_dir, "**", "*.ttf"), recursive=True))
+                font_paths.extend(glob.glob(os.path.join(font_dir, "**", "*.otf"), recursive=True))
+
+        return sorted({os.path.splitext(os.path.basename(path))[0] for path in font_paths}, key=str.casefold)
 
     def list_workflows(self) -> List[Dict[str, Any]]:
         """Returns supported workflow definitions."""

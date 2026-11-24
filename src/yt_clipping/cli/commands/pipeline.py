@@ -132,7 +132,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     broll_enabled = getattr(args, "enable_broll", False)
     broll_dir = getattr(args, "broll_assets_dir", None)
 
-    max_clips = max(1, getattr(args, "max_clips", 1) or 1)
+    max_clips = max(1, min(24, getattr(args, "max_clips", 8) or 8))
 
     print(f"[*] Starting pipeline execution for video: {video_id} (target clips: {max_clips})")
     print(f"[*] Profile: {profile.name} (layout={profile.layout_mode}, vcodec={profile.vcodec}, subs={profile.subtitle_preset}), dry_run={args.dry_run}, bounds=[{min_dur:.0f}s - {max_dur:.0f}s]")
@@ -158,6 +158,7 @@ def cmd_run(args: argparse.Namespace) -> None:
                 enable_deadair_pruning=deadair_enabled,
                 enable_broll=broll_enabled,
                 broll_assets_dir=broll_dir,
+                fill_to_target=True,
             )
             print(f"\n[SUCCESS] Pipeline Completed: Rendered {len(jobs)} Viral Clips!")
             for idx, job in enumerate(jobs, 1):

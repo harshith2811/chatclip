@@ -70,7 +70,7 @@ def api_batch_start(req: BatchStartRequest, bg_tasks: BackgroundTasks) -> Dict[s
         raise HTTPException(status_code=400, detail="No valid videos found to queue for overnight batch.")
 
     render_cfg = {
-        "max_clips": req.max_clips or 3,
+        "max_clips": req.max_clips or 8,
         "layout": req.layout or "active_speaker",
         "subtitle_preset": req.subtitle_preset or "hormozi",
         "enable_polish": True if req.enable_polish is None else req.enable_polish,

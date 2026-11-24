@@ -6,11 +6,17 @@ Guarantees end_time > start_time and duration > 0.
 """
 
 from typing import List, Optional, Any
-import uuid
 from ..contracts.models import Transcript, TranscriptSegment, HighlightCandidate, ScoreBreakdown
 from ..contracts.interfaces import HighlightDetector
 from ..utils.timeline import snap_clip_to_words
 from .dedupe import suppress_overlapping_candidates
+
+
+def make_stable_candidate_id(video_id: str, start_seconds: float, end_seconds: float) -> str:
+    """Build a repeatable ID so a previewed moment can be rendered in a later request."""
+    start_ms = int(round(float(start_seconds) * 1000.0))
+    end_ms = int(round(float(end_seconds) * 1000.0))
+    return f"cand-{video_id}-{start_ms}-{end_ms}"
 
 
 class ContextAwareSegmenter(HighlightDetector):
@@ -131,7 +137,7 @@ class ContextAwareSegmenter(HighlightDetector):
 
         # If source media is shorter than min_duration, allow single clip of full duration if >= 3.0s
         if total_duration <= min_duration:
-            cid = f"cand-{video_id}-{uuid.uuid4().hex[:8]}"
+            cid = make_stable_candidate_id(video_id, 0.0, total_duration)
             cand = HighlightCandidate(
                 candidate_id=cid,
                 video_id=video_id,
@@ -172,7 +178,7 @@ class ContextAwareSegmenter(HighlightDetector):
                     break
 
             if cur_dur >= min_duration and cur_dur <= max_duration:
-                cid = f"cand-{video_id}-{uuid.uuid4().hex[:8]}"
+                cid = make_stable_candidate_id(video_id, cur_start, cur_end)
                 cand = HighlightCandidate(
                     candidate_id=cid,
                     video_id=video_id,
@@ -258,7 +264,7 @@ class ContextAwareSegmenter(HighlightDetector):
         )
         score = breakdown.compute_composite_score()
 
-        cid = f"cand-{transcript.video_id}-{uuid.uuid4().hex[:8]}"
+        cid = make_stable_candidate_id(transcript.video_id, w_start, w_end)
         cand = HighlightCandidate(
             candidate_id=cid,
             video_id=transcript.video_id,

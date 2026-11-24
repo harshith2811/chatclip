@@ -79,7 +79,7 @@ class BatchSession:
     current_stage: str = "initializing"
     current_progress: int = 0
     render_config: Dict[str, Any] = field(default_factory=lambda: {
-        "max_clips": 3,
+        "max_clips": 8,
         "layout": "active_speaker",
         "subtitle_preset": "hormozi",
         "enable_polish": True,
@@ -196,7 +196,7 @@ class BatchQueueManager:
                 ))
 
             config = render_config or {
-                "max_clips": 3,
+                "max_clips": 8,
                 "layout": "active_speaker",
                 "subtitle_preset": "hormozi",
                 "enable_polish": True,

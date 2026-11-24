@@ -445,26 +445,6 @@ class TopTrending10MFetcher:
         """Provides high-quality pre-verified fallback videos from 10M+ channels for offline reliability."""
         return [
             QualityTrendingVideo(
-                video_id="QdBZY2fkU-0",
-                url="https://www.youtube.com/watch?v=QdBZY2fkU-0",
-                title="Grand Theft Auto VI Trailer 1",
-                channel_name="Rockstar Games",
-                channel_id="UCCl0mcuw9-jGgG1fA29x96A",
-                channel_handle="@RockstarGames",
-                channel_subscribers=11_400_000,
-                channel_subscribers_formatted="11.4M",
-                published_at="2023-12-04T23:08:44Z",
-                duration_seconds=91.0,
-                duration_formatted="1:31",
-                view_count=304_553_515,
-                like_count=11_450_000,
-                comment_count=1_120_000,
-                thumbnail_url="https://i.ytimg.com/vi/QdBZY2fkU-0/maxresdefault.jpg",
-                virality_score=99.9,
-                clipping_suitability="Tier-1 Mega Viral Record (GTA 6 Global Premiere)",
-                category_id="20",
-            ),
-            QualityTrendingVideo(
                 video_id="0e3GPea1Tyg",
                 url="https://www.youtube.com/watch?v=0e3GPea1Tyg",
                 title="$456,000 Squid Game In Real Life!",

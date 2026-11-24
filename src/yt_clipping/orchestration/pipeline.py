@@ -313,6 +313,8 @@ class ClippingPipeline:
         enable_deadair_pruning: bool = False,
         enable_broll: bool = False,
         broll_assets_dir: Optional[str] = None,
+        selected_candidate_ids: Optional[List[str]] = None,
+        fill_to_target: bool = True,
     ) -> ClipJob:
         """
         Executes the full pipeline for a video ID.
@@ -787,7 +789,7 @@ class ClippingPipeline:
     def process_video_multi(
         self,
         video_id: str,
-        max_clips: int = 3,
+        max_clips: int = 8,
         profile: Optional[RenderProfile] = None,
         dry_run: bool = True,
         auto_approve_threshold: float = 65.0,
@@ -860,6 +862,19 @@ class ClippingPipeline:
             self.scorer.score_candidate(c, transcript, heatmap=heatmap_data)
             for c in candidates
         ]
+        scored_candidates.sort(key=lambda c: c.score, reverse=True)
+
+        requested_ids = list(dict.fromkeys(selected_candidate_ids or []))
+        if requested_ids:
+            by_id = {candidate.candidate_id: candidate for candidate in scored_candidates}
+            missing_ids = [candidate_id for candidate_id in requested_ids if candidate_id not in by_id]
+            if missing_ids:
+                raise RuntimeError(
+                    "Requested preview candidates are no longer available. Refresh the analysis and retry: "
+                    + ", ".join(missing_ids)
+                )
+            scored_candidates = [by_id[candidate_id] for candidate_id in requested_ids]
+            max_clips = min(max_clips, len(scored_candidates))
         from ..detection.solid_shorts import SolidShortsDecider
         decider = SolidShortsDecider()
         decision = decider.decide(
@@ -868,6 +883,7 @@ class ClippingPipeline:
             heatmap_data=heatmap_data,
             target_count=max_clips,
             strict_quality=True,
+            fill_to_target=fill_to_target,
         )
         target_clips = decision.selected_candidates
         if not target_clips and scored_candidates:

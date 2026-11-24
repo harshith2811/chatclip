@@ -15,12 +15,13 @@ class PreviewRequest(BaseModel):
     video_id_or_url: str = Field(..., description="YouTube video ID or URL")
     min_duration: float = Field(15.0, description="Minimum clip duration in seconds")
     max_duration: float = Field(60.0, description="Maximum clip duration in seconds")
+    max_clips: int = Field(8, ge=1, le=24, description="Number of ranked, distinct clip candidates to return")
 
 
 class BatchStartRequest(BaseModel):
     video_ids: Optional[List[str]] = None
     name: Optional[str] = "Overnight 10M+ Trending Batch"
-    max_clips: Optional[int] = 3
+    max_clips: Optional[int] = Field(8, ge=1, le=24)
     layout: Optional[str] = "active_speaker"
     subtitle_preset: Optional[str] = "hormozi"
     enable_polish: Optional[bool] = True
@@ -30,7 +31,15 @@ class BatchStartRequest(BaseModel):
 
 class RenderRequest(BaseModel):
     video_id_or_url: str = Field(..., description="YouTube video ID or URL")
-    max_clips: int = Field(5, description="Number of solid shorts to extract (1-10)")
+    max_clips: int = Field(8, ge=1, le=24, description="Number of distinct ranked shorts to extract")
+    selected_candidate_ids: Optional[List[str]] = Field(
+        None,
+        description="Optional stable preview candidate IDs to render; omitted means render the top ranked batch",
+    )
+    fill_to_target: bool = Field(
+        True,
+        description="Fill the requested count with the best viable non-overlapping candidates after strict viral picks",
+    )
     layout: str = Field("active_speaker", description="Layout: active_speaker | blur_background | split_screen")
     subtitle_preset: str = Field("hormozi", description="Subtitle preset: hormozi | beast_bounce | neon_cyber | clean_editorial")
     enable_polish: bool = Field(True, description="Enable broadcast hook pacing and anti-pop audio transitions")
@@ -41,7 +50,7 @@ class RenderRequest(BaseModel):
 
 class StreamToClipperRequest(BaseModel):
     video_id_or_url: str = Field(..., description="YouTube video ID or URL to clip and publish")
-    max_clips: int = Field(1, description="Number of solid shorts to extract and publish (1-5)")
+    max_clips: int = Field(8, ge=1, le=24, description="Number of distinct ranked shorts to extract and publish")
     layout: str = Field("active_speaker", description="Layout: active_speaker | blur_background | split_screen")
     subtitle_preset: str = Field("hormozi", description="Subtitle preset: hormozi | beast_bounce | neon_cyber | clean_editorial")
     enable_polish: bool = Field(True, description="Enable broadcast hook pacing polish")

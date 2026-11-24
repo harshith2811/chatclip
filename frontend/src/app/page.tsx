@@ -107,6 +107,7 @@ export default function DashboardPage() {
   // Active video analysis ID — synchronized with discovery store
   const [activeAnalysisVideoId, setActiveAnalysisVideoId] = React.useState<string | null>(() => currentVideoId || null);
   const [hasRequestedAnalysis, setHasRequestedAnalysis] = React.useState<boolean>(() => !!currentVideoId);
+  const [targetClipCount, setTargetClipCount] = React.useState<number>(8);
 
   React.useEffect(() => {
     if (currentVideoId && currentVideoId !== activeAnalysisVideoId) {
@@ -128,7 +129,7 @@ export default function DashboardPage() {
     isError: isPreviewError,
   } = useVideoPreview(
     activeAnalysisVideoId && hasRequestedAnalysis
-      ? { video_id_or_url: activeAnalysisVideoId, min_duration: 15, max_duration: 60 }
+      ? { video_id_or_url: activeAnalysisVideoId, min_duration: 15, max_duration: 60, max_clips: targetClipCount }
       : null
   );
 
@@ -181,13 +182,11 @@ export default function DashboardPage() {
       isMinimized: false,
     });
 
-    const solidClipsCount = preview?.solid_clips?.length || preview?.candidates?.length || 5;
-    const maxClipsToRender = Math.max(solidClipsCount, 8);
-
     renderMutation.mutate(
       {
         video_id_or_url: targetVideo,
-        max_clips: maxClipsToRender,
+        max_clips: targetClipCount,
+        fill_to_target: true,
       },
       {
         onSuccess: (data) => {
@@ -366,6 +365,8 @@ export default function DashboardPage() {
       {
         video_id_or_url: activeAnalysisVideoId || '',
         max_clips: 1,
+        selected_candidate_ids: [candId],
+        fill_to_target: false,
       },
       {
         onSuccess: (data) => {
@@ -499,6 +500,8 @@ export default function DashboardPage() {
                 <MetadataCard
                   metadata={metadata}
                   candidatesCount={candidatesList.length}
+                  targetClipCount={targetClipCount}
+                  onTargetClipCountChange={setTargetClipCount}
                   isRendering={isGlobalRendering}
                   onRenderClips={handleGlobalRender}
                   onOpenStudio={() => setActiveTab('studio')}

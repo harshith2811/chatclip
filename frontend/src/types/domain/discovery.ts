@@ -106,6 +106,7 @@ export interface PreviewRequest {
   video_id_or_url: string;
   min_duration?: number;
   max_duration?: number;
+  max_clips?: number;
 }
 
 export interface RetentionPoint {
@@ -259,6 +260,8 @@ export interface PreviewResponse {
   solid_clips?: CandidateHighlight[];
   total_candidates_found?: number;
   recommended_solid_shorts_count?: number;
+  requested_clips_count?: number;
+  selection_shortfall?: number;
   capacity_limit?: number;
   decision_reasons?: string[];
   heatmap?: HeatmapData | null;

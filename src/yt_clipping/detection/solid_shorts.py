@@ -22,6 +22,8 @@ class SolidShortsConfig:
     solid_quality_floor: float = 72.0            # Strict floor: reject any clip below this
     strict_hook_floor: float = 6.0               # Minimum hook rating out of 10
     quality_cliff_drop: float = 12.0             # Score drop indicating a cliff
+    viable_fallback_floor: float = 50.0          # Minimum score when an explicit batch count is requested
+    viable_fallback_hook_floor: float = 4.0      # Avoid filling a batch with unusable openings
 
     # Duration scaling capacity thresholds (seconds)
     short_video_max_duration: float = 180.0      # < 3 mins -> 1-2 clips
@@ -103,6 +105,7 @@ class SolidShortsDecider:
         target_count: Optional[int] = None,
         strict_quality: bool = True,
         trend_alignments: Optional[Dict[str, Dict[str, Any]]] = None,
+        fill_to_target: bool = False,
     ) -> SolidShortsDecision:
         """
         Executes the 5-signal solid shorts decision algorithm.
@@ -120,7 +123,7 @@ class SolidShortsDecider:
 
         capacity, min_spacing = self.calculate_capacity_ceiling(duration_seconds)
         if target_count is not None and target_count > 0:
-            capacity = target_count
+            capacity = min(int(target_count), self.config.max_global_clips_ceiling * 2)
 
         quality_floor = self.config.solid_quality_floor if strict_quality else 65.0
         reasons: List[str] = [
@@ -252,6 +255,52 @@ class SolidShortsDecider:
                 selected.append(best_cand)
                 reasons.append(
                     f"Accepted top solitary candidate [{best_cand.start_seconds:.1f}s - {best_cand.end_seconds:.1f}s] as best available (Score: {best_eff:.1f}/100)."
+                )
+
+        # An explicit batch request means "give me the best N viable moments", not
+        # "silently collapse the batch to one". Preserve the strict viral picks,
+        # then fill from the ranked pool while retaining hook and overlap safeguards.
+        if fill_to_target and target_count is not None and len(selected) < capacity:
+            selected_ids = {c.candidate_id for c in selected}
+            for eff_score, cand, note in scored_pool:
+                if len(selected) >= capacity:
+                    break
+                if cand.candidate_id in selected_ids:
+                    continue
+                if eff_score < self.config.viable_fallback_floor:
+                    continue
+
+                hook_val = 7.0
+                if hasattr(cand, "breakdown") and cand.breakdown:
+                    hook_val = float(getattr(cand.breakdown, "hook_score", 7.0))
+                if hook_val < self.config.viable_fallback_hook_floor:
+                    continue
+
+                collides = False
+                for acc in selected:
+                    overlap = max(
+                        0.0,
+                        min(cand.end_seconds, acc.end_seconds) - max(cand.start_seconds, acc.start_seconds),
+                    )
+                    shorter = min(cand.duration_seconds, acc.duration_seconds)
+                    if shorter > 0 and (overlap / shorter) > 0.20:
+                        collides = True
+                        break
+                if collides:
+                    continue
+
+                selected.append(cand)
+                selected_eff_scores.append(eff_score)
+                selected_ids.add(cand.candidate_id)
+                reasons.append(
+                    f"Filled requested Clip #{len(selected)} with best viable distinct moment "
+                    f"[{cand.start_seconds:.1f}s - {cand.end_seconds:.1f}s] "
+                    f"(Score: {eff_score:.1f}/100, Hook: {hook_val:.1f}/10, {note})."
+                )
+
+            if len(selected) < capacity:
+                reasons.append(
+                    f"Requested {capacity} clips, but only {len(selected)} distinct viable moments were available."
                 )
 
         return SolidShortsDecision(

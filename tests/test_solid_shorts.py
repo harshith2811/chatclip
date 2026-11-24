@@ -186,3 +186,38 @@ def test_quality_cliff_with_heatmap_boosted_candidate():
     assert [c.candidate_id for c in decision.selected_candidates] == ["c1"]
     assert any("Quality Cliff detected" in r for r in decision.reasons)
 
+
+def test_explicit_batch_count_fills_with_best_distinct_viable_candidates():
+    decider = SolidShortsDecider()
+    candidates = [
+        make_candidate("c1", 0.0, 30.0, score=91.0, hook=9.0),
+        make_candidate("c2", 60.0, 90.0, score=69.0, hook=7.0),
+        make_candidate("c3", 120.0, 150.0, score=64.0, hook=6.0),
+        make_candidate("c4", 180.0, 210.0, score=58.0, hook=5.0),
+    ]
+
+    decision = decider.decide(
+        candidates,
+        duration_seconds=600.0,
+        target_count=4,
+        strict_quality=True,
+        fill_to_target=True,
+    )
+
+    assert [candidate.candidate_id for candidate in decision.selected_candidates] == ["c1", "c2", "c3", "c4"]
+    assert decision.recommended_count == 4
+    assert any("Filled requested Clip #4" in reason for reason in decision.reasons)
+
+
+def test_explicit_batch_count_reports_shortfall_instead_of_duplicating_moments():
+    decider = SolidShortsDecider()
+    candidates = [
+        make_candidate("c1", 0.0, 30.0, score=90.0, hook=9.0),
+        make_candidate("c2", 5.0, 32.0, score=80.0, hook=8.0),
+    ]
+
+    decision = decider.decide(candidates, 300.0, target_count=3, fill_to_target=True)
+
+    assert decision.recommended_count == 1
+    assert any("only 1 distinct viable moments" in reason for reason in decision.reasons)
+

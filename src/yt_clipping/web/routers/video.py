@@ -135,7 +135,10 @@ def api_preview(req: PreviewRequest) -> Dict[str, Any]:
     # Check disk cache for instantaneous response
     preview_cache_dir = os.path.join(DATA_DIR, "previews")
     os.makedirs(preview_cache_dir, exist_ok=True)
-    cache_file = os.path.join(preview_cache_dir, f"{video_id}_{int(req.min_duration)}_{int(req.max_duration)}.json")
+    cache_file = os.path.join(
+        preview_cache_dir,
+        f"{video_id}_{int(req.min_duration)}_{int(req.max_duration)}_{req.max_clips}.json",
+    )
     if os.path.exists(cache_file):
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
@@ -217,8 +220,10 @@ def api_preview(req: PreviewRequest) -> Dict[str, Any]:
         candidates=candidates,
         duration_seconds=transcript.duration_seconds if transcript else (video_info.duration if video_info else 300.0),
         heatmap_data=heatmap_data,
+        target_count=req.max_clips,
         strict_quality=True,
         trend_alignments=trend_alignments,
+        fill_to_target=True,
     )
 
     # Ensure at least 1 candidate is always selected if candidates exist
@@ -350,6 +355,8 @@ def api_preview(req: PreviewRequest) -> Dict[str, Any]:
         "solid_clips": solid_clips_payload,
         "total_candidates_found": len(candidates),
         "recommended_solid_shorts_count": decision.recommended_count,
+        "requested_clips_count": req.max_clips,
+        "selection_shortfall": max(0, req.max_clips - decision.recommended_count),
         "capacity_limit": decision.capacity_limit,
         "decision_reasons": decision.reasons,
         "heatmap": heatmap_payload,
@@ -405,7 +412,7 @@ def _render_video_pipeline(
         profile=get_active_compliance_profile(),
     )
 
-    max_clips = config.get("max_clips", 5)
+    max_clips = max(1, min(24, int(config.get("max_clips", 8))))
     layout = config.get("layout", "active_speaker")
     subtitle_preset = config.get("subtitle_preset", "hormozi")
     enable_outro = config.get("enable_outro", True)
@@ -433,6 +440,8 @@ def _render_video_pipeline(
         max_clips=max_clips,
         profile=profile,
         dry_run=True,
+        selected_candidate_ids=config.get("selected_candidate_ids"),
+        fill_to_target=bool(config.get("fill_to_target", True)),
     )
 
     if progress_cb:
@@ -613,6 +622,7 @@ def api_render(req: RenderRequest, bg_tasks: BackgroundTasks) -> Dict[str, Any]:
         "task_id": task_id,
         "job_id": task_id,
         "status": "QUEUED",
+        "requested_clips": req.max_clips,
         "check_status_url": f"/api/v1/jobs/{task_id}",
     }
 
